@@ -87,6 +87,40 @@ const UserModel = {
 
   async comparePassword(candidatePassword, passwordHash) {
     return await bcrypt.compare(candidatePassword, passwordHash);
+  },
+
+  async getProfile(userId) {
+    const rows = await query(
+      `SELECT u.id, u.first_name, u.last_name, u.email, u.role, u.is_active, u.created_at,
+              c.phone, c.address
+       FROM users u
+       LEFT JOIN customers c ON c.user_id = u.id
+       WHERE u.id = ?`,
+      [userId]
+    );
+    return rows[0] || null;
+  },
+
+  async updateProfile(userId, { first_name, last_name, phone, address }) {
+    await query(
+      'UPDATE users SET first_name = ?, last_name = ? WHERE id = ?',
+      [first_name, last_name, userId]
+    );
+
+    const existingCust = await query('SELECT id FROM customers WHERE user_id = ?', [userId]);
+    if (existingCust.length > 0) {
+      await query(
+        'UPDATE customers SET phone = ?, address = ? WHERE user_id = ?',
+        [phone || null, address || null, userId]
+      );
+    } else {
+      await query(
+        'INSERT INTO customers (user_id, phone, address) VALUES (?, ?, ?)',
+        [userId, phone || null, address || null]
+      );
+    }
+
+    return this.getProfile(userId);
   }
 };
 
