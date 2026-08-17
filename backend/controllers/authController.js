@@ -44,6 +44,7 @@ const login = async (req, res, next) => {
         username: fullUser.username,
         email: fullUser.email,
         role: fullUser.role,
+        is_active: fullUser.is_active,
         is_temp_password: fullUser.is_temp_password,
         must_change_password: mustChangePassword,
         profile_picture: fullUser.profile_picture || fullUser.profile_image || null,
@@ -70,27 +71,32 @@ const register = async (req, res, next) => {
       return res.status(400).json({ message: 'Email is already registered' });
     }
 
-    if (username) {
-      const existingUser = await UserModel.findByUsername(username);
-      if (existingUser) {
+    let finalUsername = username ? username.trim() : `${first_name.trim().toLowerCase()}.${last_name.trim().toLowerCase()}`.replace(/[^a-z0-9.]/g, '');
+
+    const existingUser = await UserModel.findByUsername(finalUsername);
+    if (existingUser) {
+      if (username) {
         return res.status(400).json({ message: 'Username is already taken' });
+      } else {
+        finalUsername = `${finalUsername}${Math.floor(100 + Math.random() * 900)}`;
       }
     }
 
     const userId = await UserModel.createUser({
       first_name,
       last_name,
-      username,
+      username: finalUsername,
       email,
       password,
-      role: 'customer'
-      // is_active defaults to 0 (pending approval) for customers in userModel
+      role: 'customer',
+      is_active: 0,
+      is_temp_password: 0
     });
 
     // Create linked customer profile row
     await query(
-      'INSERT INTO customers (user_id, phone, address) VALUES (?, ?, ?)',
-      [userId, phone || null, address || null]
+      'INSERT INTO customers (user_id, phone, address, username) VALUES (?, ?, ?, ?)',
+      [userId, phone || null, address || null, finalUsername]
     );
 
     // Do NOT issue a token — account must be approved by admin first

@@ -163,7 +163,7 @@ const UserModel = {
     // Fetch existing user to preserve profile_picture if profile_picture is undefined
     const currentUser = await this.findById(userId);
     let finalProfilePicture = currentUser ? currentUser.profile_picture : null;
-    
+
     if (profile_picture !== undefined) {
       finalProfilePicture = profile_picture ? profile_picture : null;
     }
@@ -192,7 +192,7 @@ const UserModel = {
   async updateProfilePicture(userId, profile_picture) {
     const cleanPic = profile_picture ?? null;
     await query('UPDATE users SET profile_picture = ? WHERE id = ?', [cleanPic, userId]);
-    
+
     const existingCust = await query('SELECT id FROM customers WHERE user_id = ?', [userId]);
     if (existingCust.length > 0) {
       await query('UPDATE customers SET profile_image = ? WHERE user_id = ?', [cleanPic, userId]);

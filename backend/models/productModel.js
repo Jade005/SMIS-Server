@@ -18,8 +18,8 @@ const ProductModel = {
     }
 
     if (filters.meat_type) {
-      sql += ' AND p.meat_type = ?';
-      params.push(filters.meat_type);
+      sql += ' AND (p.meat_type = ? OR c.name = ?)';
+      params.push(filters.meat_type, filters.meat_type);
     }
 
     if (filters.is_active !== undefined) {
@@ -28,8 +28,9 @@ const ProductModel = {
     }
 
     if (filters.search) {
-      sql += ' AND (p.name LIKE ? OR p.meat_cut LIKE ?)';
-      params.push(`%${filters.search}%`, `%${filters.search}%`);
+      sql += ' AND (p.name LIKE ? OR p.meat_cut LIKE ? OR p.meat_type LIKE ? OR c.name LIKE ?)';
+      const s = `%${filters.search}%`;
+      params.push(s, s, s, s);
     }
 
     sql += ' GROUP BY p.id ORDER BY p.name ASC';
