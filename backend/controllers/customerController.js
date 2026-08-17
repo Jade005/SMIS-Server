@@ -1,12 +1,13 @@
 const CustomerModel = require('../models/customerModel');
 const UserModel = require('../models/userModel');
+const { saveAvatarImage } = require('../utils/avatarStorage');
 const bcrypt = require('bcryptjs');
 
 const getProfile = async (req, res, next) => {
   try {
-    const profile = await CustomerModel.getByUserId(req.user.id);
+    const profile = await UserModel.getProfile(req.user.id);
     if (!profile) {
-      return res.status(404).json({ message: 'Customer profile not found' });
+      return res.status(404).json({ message: 'User profile not found' });
     }
     res.json({ profile });
   } catch (error) {
@@ -17,7 +18,9 @@ const getProfile = async (req, res, next) => {
 const updateProfile = async (req, res, next) => {
   try {
     const userId = req.user.id;
-    const { first_name, last_name, username, email, contact_number, profile_image } = req.body;
+    const { first_name, last_name, username, email, contact_number, phone, profile_image, profile_picture, address } = req.body;
+
+    const inputImg = (profile_picture !== undefined ? profile_picture : profile_image);
 
     // Required fields validation
     if (!first_name || !first_name.trim() || !last_name || !last_name.trim()) {
@@ -32,22 +35,7 @@ const updateProfile = async (req, res, next) => {
       return res.status(400).json({ message: 'Email address is required.' });
     }
 
-    if (!contact_number || !contact_number.toString().trim()) {
-      return res.status(400).json({ message: 'Contact number is required.' });
-    }
-
-    // Email format validation
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(email.trim())) {
-      return res.status(400).json({ message: 'Please enter a valid email address.' });
-    }
-
-    // Contact number digits only validation
-    const phoneRegex = /^[0-9]+$/;
-    const cleanContact = contact_number.toString().trim();
-    if (!phoneRegex.test(cleanContact)) {
-      return res.status(400).json({ message: 'Contact number must contain numbers only.' });
-    }
+    const cleanContact = (contact_number || phone || '').toString().trim();
 
     // Check unique username
     const existingUsername = await CustomerModel.findByUsername(username.trim(), userId);
@@ -61,13 +49,23 @@ const updateProfile = async (req, res, next) => {
       return res.status(400).json({ message: 'Email address is already registered to another account.' });
     }
 
-    const updatedProfile = await CustomerModel.updateProfile(userId, {
+    // Process & save profile image if updated
+    let savedAvatarUrl = undefined;
+    if (inputImg) {
+      savedAvatarUrl = saveAvatarImage(inputImg, userId);
+    } else if (inputImg === null || inputImg === '') {
+      savedAvatarUrl = null;
+    }
+
+    const updatedProfile = await UserModel.updateProfile(userId, {
       first_name: first_name.trim(),
       last_name: last_name.trim(),
       username: username.trim(),
       email: email.trim(),
-      contact_number: cleanContact,
-      profile_image: profile_image || null
+      contact_number: cleanContact ? cleanContact : null,
+      phone: cleanContact ? cleanContact : null,
+      address: address ?? null,
+      profile_picture: savedAvatarUrl
     });
 
     res.json({
@@ -94,7 +92,6 @@ const changePassword = async (req, res, next) => {
       return res.status(404).json({ message: 'User not found' });
     }
 
-    // Query password_hash directly from users
     const { query } = require('../config/db');
     const userRows = await query('SELECT password_hash FROM users WHERE id = ?', [userId]);
     if (!userRows.length) {

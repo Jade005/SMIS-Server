@@ -14,9 +14,13 @@ const pool = mysql.createPool({
   dateStrings: true
 });
 
-// Helper function to execute SQL queries
-async function query(sql, params) {
-  const [results] = await pool.execute(sql, params);
+// Helper function to execute SQL queries safely with parameter sanitization
+async function query(sql, params = []) {
+  // Convert any JS undefined bind parameters to SQL null to prevent driver errors
+  const sanitizedParams = (Array.isArray(params) ? params : []).map((p) =>
+    p === undefined ? null : p
+  );
+  const [results] = await pool.execute(sql, sanitizedParams);
   return results;
 }
 

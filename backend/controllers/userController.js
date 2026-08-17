@@ -1,4 +1,7 @@
 const UserModel = require('../models/userModel');
+const { generateTemporaryPassword } = require('../utils/passwordHelper');
+const { sendAccountCredentialsEmail } = require('../utils/emailService');
+const { saveAvatarImage } = require('../utils/avatarStorage');
 
 const getUsers = async (req, res, next) => {
     try {
@@ -24,31 +27,65 @@ const getUserById = async (req, res, next) => {
 
 const createUser = async (req, res, next) => {
     try {
-        const { first_name, last_name, email, password, role, phone, address } = req.body;
+        const { first_name, last_name, username, email, role, password, phone, address, profile_picture } = req.body;
 
-        if (!first_name || !last_name || !email || !password || !role) {
-            return res.status(400).json({ message: 'All fields are required' });
+        if (!first_name || !last_name || !email || !role) {
+            return res.status(400).json({ message: 'Full Name (first and last name), Email Address, and Role are required.' });
         }
 
-        const existing = await UserModel.findByEmail(email);
-        if (existing) {
-            return res.status(400).json({ message: 'Email is already registered' });
+        const finalUsername = (username || `${first_name.trim().toLowerCase()}.${last_name.trim().toLowerCase()}`).replace(/\s+/g, '');
+
+        const existingEmail = await UserModel.findByEmail(email);
+        if (existingEmail) {
+            return res.status(400).json({ message: 'Email address is already registered' });
         }
 
-        // Customers created by cashier also start as inactive (pending admin approval)
-        const id = await UserModel.createUser({ first_name, last_name, email, password, role });
+        const existingUsername = await UserModel.findByUsername(finalUsername);
+        if (existingUsername) {
+            return res.status(400).json({ message: `Username "${finalUsername}" is already taken` });
+        }
 
-        // If registering a customer with contact info, create the customer profile
+        const tempPassword = password || generateTemporaryPassword(10);
+        const isTemp = true;
+
+        const id = await UserModel.createUser({
+            first_name,
+            last_name,
+            username: finalUsername,
+            email,
+            password: tempPassword,
+            role,
+            is_active: true,
+            is_temp_password: isTemp ? 1 : 0,
+            profile_picture: profile_picture || null
+        });
+
         if (role === 'customer' && (phone || address)) {
             const { query } = require('../config/db');
             await query(
-                'INSERT INTO customers (user_id, phone, address) VALUES (?, ?, ?)',
-                [id, phone || null, address || null]
+                'INSERT INTO customers (user_id, phone, address, profile_image) VALUES (?, ?, ?, ?)',
+                [id, phone || null, address || null, profile_picture || null]
             );
         }
 
-        const user = await UserModel.findById(id);
-        res.status(201).json({ message: 'Customer account created and pending admin approval.', user });
+        const fullName = `${first_name} ${last_name}`;
+
+        const emailResult = await sendAccountCredentialsEmail({
+            email,
+            fullName,
+            username: finalUsername,
+            tempPassword,
+            isReset: false
+        });
+
+        const createdUser = await UserModel.findById(id);
+
+        res.status(201).json({
+            message: `Account created successfully for ${fullName}. Credentials email sent to ${email}.`,
+            user: createdUser,
+            email_sent: emailResult.success,
+            email_fallback: Boolean(emailResult.fallback)
+        });
     } catch (error) {
         next(error);
     }
@@ -56,8 +93,12 @@ const createUser = async (req, res, next) => {
 
 const updateUser = async (req, res, next) => {
     try {
-        const { first_name, last_name, email, role } = req.body;
-        const user = await UserModel.updateUser(req.params.id, { first_name, last_name, email, role });
+        const { first_name, last_name, username, email, role, profile_picture } = req.body;
+        let savedAvatar = undefined;
+        if (profile_picture) {
+          savedAvatar = saveAvatarImage(profile_picture, req.params.id);
+        }
+        const user = await UserModel.updateUser(req.params.id, { first_name, last_name, username, email, role, profile_picture: savedAvatar });
         res.json({ message: 'User updated successfully', user });
     } catch (error) {
         next(error);
@@ -76,12 +117,30 @@ const toggleUserStatus = async (req, res, next) => {
 
 const resetPassword = async (req, res, next) => {
     try {
-        const { password } = req.body;
-        if (!password) {
-            return res.status(400).json({ message: 'New password is required' });
+        const user = await UserModel.findById(req.params.id);
+        if (!user) {
+            return res.status(404).json({ message: 'User not found' });
         }
-        await UserModel.updatePassword(req.params.id, password);
-        res.json({ message: 'User password reset successfully' });
+
+        const tempPassword = req.body?.password || generateTemporaryPassword(10);
+        await UserModel.resetPasswordWithTemp(user.id, tempPassword);
+
+        const fullName = `${user.first_name} ${user.last_name}`;
+        const username = user.username || user.email;
+
+        const emailResult = await sendAccountCredentialsEmail({
+            email: user.email,
+            fullName,
+            username,
+            tempPassword,
+            isReset: true
+        });
+
+        res.json({
+            message: `Password reset successfully for ${fullName}. New credentials sent to ${user.email}.`,
+            email_sent: emailResult.success,
+            email_fallback: Boolean(emailResult.fallback)
+        });
     } catch (error) {
         next(error);
     }
@@ -122,16 +181,28 @@ const getProfile = async (req, res, next) => {
 
 const updateProfile = async (req, res, next) => {
   try {
-    const { first_name, last_name, phone, address } = req.body;
-    if (!first_name || !last_name) {
+    const userId = req.user.id;
+    const { first_name, last_name, username, email, phone, contact_number, address, profile_picture, profile_image } = req.body;
+
+    if (!first_name || !first_name.trim() || !last_name || !last_name.trim()) {
       return res.status(400).json({ message: 'First name and last name are required' });
     }
 
-    const updatedProfile = await UserModel.updateProfile(req.user.id, {
-      first_name,
-      last_name,
-      phone,
-      address
+    const inputImg = profile_picture || profile_image;
+    let savedAvatarUrl = undefined;
+    if (inputImg) {
+      savedAvatarUrl = saveAvatarImage(inputImg, userId);
+    }
+
+    const updatedProfile = await UserModel.updateProfile(userId, {
+      first_name: first_name.trim(),
+      last_name: last_name.trim(),
+      username: username ? username.trim() : req.user.username,
+      email: email ? email.trim() : req.user.email,
+      phone: contact_number || phone || null,
+      contact_number: contact_number || phone || null,
+      address,
+      profile_picture: savedAvatarUrl
     });
 
     res.json({ message: 'Profile updated successfully', profile: updatedProfile });
@@ -156,7 +227,6 @@ const changePassword = async (req, res, next) => {
       return res.status(400).json({ message: 'New password and confirmation do not match' });
     }
 
-    // Fetch user with password_hash
     const { query } = require('../config/db');
     const users = await query('SELECT * FROM users WHERE id = ?', [req.user.id]);
     const user = users[0];
@@ -165,16 +235,14 @@ const changePassword = async (req, res, next) => {
       return res.status(404).json({ message: 'User not found' });
     }
 
-    // Verify current password
     const isMatch = await UserModel.comparePassword(current_password, user.password_hash);
     if (!isMatch) {
       return res.status(400).json({ message: 'Current password is incorrect' });
     }
 
-    // Update password
     await UserModel.updatePassword(req.user.id, new_password);
 
-    res.json({ message: 'Password changed successfully' });
+    res.json({ message: 'Password changed successfully! You may now use your new password.' });
   } catch (error) {
     next(error);
   }

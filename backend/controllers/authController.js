@@ -4,13 +4,14 @@ const { query } = require('../config/db');
 
 const login = async (req, res, next) => {
   try {
-    const { email, password } = req.body;
+    const { email, username, identifier, password } = req.body;
+    const loginId = email || username || identifier;
 
-    if (!email || !password) {
-      return res.status(400).json({ message: 'Please provide email and password' });
+    if (!loginId || !password) {
+      return res.status(400).json({ message: 'Please provide email/username and password' });
     }
 
-    const user = await UserModel.findByEmail(email);
+    const user = await UserModel.findByUsernameOrEmail(loginId);
 
     if (!user) {
       return res.status(401).json({ message: 'Invalid credentials' });
@@ -27,16 +28,28 @@ const login = async (req, res, next) => {
     }
 
     const token = generateToken(user);
+    const mustChangePassword = Boolean(user.is_temp_password);
+
+    const userProfile = await UserModel.getProfile(user.id);
+    const fullUser = userProfile || user;
 
     res.json({
       message: 'Login successful',
       token,
+      must_change_password: mustChangePassword,
       user: {
-        id: user.id,
-        first_name: user.first_name,
-        last_name: user.last_name,
-        email: user.email,
-        role: user.role
+        id: fullUser.id,
+        first_name: fullUser.first_name,
+        last_name: fullUser.last_name,
+        username: fullUser.username,
+        email: fullUser.email,
+        role: fullUser.role,
+        is_temp_password: fullUser.is_temp_password,
+        must_change_password: mustChangePassword,
+        profile_picture: fullUser.profile_picture || fullUser.profile_image || null,
+        profile_image: fullUser.profile_picture || fullUser.profile_image || null,
+        contact_number: fullUser.contact_number || fullUser.phone || null,
+        address: fullUser.address || null
       }
     });
   } catch (error) {
@@ -46,20 +59,28 @@ const login = async (req, res, next) => {
 
 const register = async (req, res, next) => {
   try {
-    const { first_name, last_name, email, password, phone, address } = req.body;
+    const { first_name, last_name, username, email, password, phone, address } = req.body;
 
     if (!first_name || !last_name || !email || !password) {
       return res.status(400).json({ message: 'Please complete all required fields' });
     }
 
-    const existing = await UserModel.findByEmail(email);
-    if (existing) {
+    const existingEmail = await UserModel.findByEmail(email);
+    if (existingEmail) {
       return res.status(400).json({ message: 'Email is already registered' });
+    }
+
+    if (username) {
+      const existingUser = await UserModel.findByUsername(username);
+      if (existingUser) {
+        return res.status(400).json({ message: 'Username is already taken' });
+      }
     }
 
     const userId = await UserModel.createUser({
       first_name,
       last_name,
+      username,
       email,
       password,
       role: 'customer'
@@ -84,7 +105,17 @@ const register = async (req, res, next) => {
 
 const getMe = async (req, res, next) => {
   try {
-    res.json({ user: req.user });
+    const userProfile = await UserModel.getProfile(req.user.id);
+    const user = userProfile || req.user;
+
+    res.json({
+      user: {
+        ...user,
+        profile_picture: user.profile_picture || user.profile_image || null,
+        profile_image: user.profile_picture || user.profile_image || null,
+        must_change_password: Boolean(user.is_temp_password)
+      }
+    });
   } catch (error) {
     next(error);
   }

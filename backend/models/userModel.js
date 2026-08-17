@@ -3,20 +3,36 @@ const bcrypt = require('bcryptjs');
 
 const UserModel = {
   async findByEmail(email) {
-    const users = await query('SELECT * FROM users WHERE email = ?', [email]);
+    const users = await query('SELECT id, first_name, last_name, username, email, password_hash, role, is_active, is_temp_password, profile_picture, created_at, updated_at FROM users WHERE email = ?', [email ?? null]);
+    return users[0] || null;
+  },
+
+  async findByUsername(username) {
+    if (!username) return null;
+    const users = await query('SELECT id, first_name, last_name, username, email, password_hash, role, is_active, is_temp_password, profile_picture, created_at, updated_at FROM users WHERE username = ?', [username ?? null]);
+    return users[0] || null;
+  },
+
+  async findByUsernameOrEmail(identifier) {
+    if (!identifier) return null;
+    const cleanId = identifier ?? null;
+    const users = await query(
+      'SELECT id, first_name, last_name, username, email, password_hash, role, is_active, is_temp_password, profile_picture, created_at, updated_at FROM users WHERE email = ? OR username = ?',
+      [cleanId, cleanId]
+    );
     return users[0] || null;
   },
 
   async findById(id) {
     const users = await query(
-      'SELECT id, first_name, last_name, email, role, is_active, created_at, updated_at FROM users WHERE id = ?',
-      [id]
+      'SELECT id, first_name, last_name, username, email, role, is_active, is_temp_password, profile_picture, created_at, updated_at FROM users WHERE id = ?',
+      [id ?? null]
     );
     return users[0] || null;
   },
 
   async getAllUsers(filters = {}) {
-    let sql = 'SELECT id, first_name, last_name, email, role, is_active, created_at FROM users WHERE 1=1';
+    let sql = 'SELECT id, first_name, last_name, username, email, role, is_active, is_temp_password, profile_picture, created_at FROM users WHERE 1=1';
     const params = [];
 
     if (filters.role) {
@@ -33,25 +49,49 @@ const UserModel = {
     return await query(sql, params);
   },
 
-  async createUser({ first_name, last_name, email, password, role = 'customer', is_active }) {
+  async createUser({ first_name, last_name, username, email, password, role = 'customer', is_active, is_temp_password = 0, profile_picture = null }) {
     const salt = await bcrypt.genSalt(12);
     const password_hash = await bcrypt.hash(password, salt);
 
-    // Customers start inactive (pending admin approval); other roles start active
     const active = is_active !== undefined ? (is_active ? 1 : 0) : (role === 'customer' ? 0 : 1);
+    const tempPassFlag = is_temp_password ? 1 : 0;
 
     const result = await query(
-      'INSERT INTO users (first_name, last_name, email, password_hash, role, is_active) VALUES (?, ?, ?, ?, ?, ?)',
-      [first_name, last_name, email, password_hash, role, active]
+      'INSERT INTO users (first_name, last_name, username, email, password_hash, role, is_active, is_temp_password, profile_picture) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [
+        first_name ?? null,
+        last_name ?? null,
+        username ?? null,
+        email ?? null,
+        password_hash,
+        role,
+        active,
+        tempPassFlag,
+        profile_picture ?? null
+      ]
     );
 
     return result.insertId;
   },
 
-  async updateUser(id, { first_name, last_name, email, role }) {
+  async updateUser(id, { first_name, last_name, username, email, role, profile_picture }) {
+    const currentUser = await this.findById(id);
+    let finalPicture = currentUser ? currentUser.profile_picture : null;
+    if (profile_picture !== undefined) {
+      finalPicture = profile_picture ? profile_picture : null;
+    }
+
     await query(
-      'UPDATE users SET first_name = ?, last_name = ?, email = ?, role = ? WHERE id = ?',
-      [first_name, last_name, email, role, id]
+      'UPDATE users SET first_name = ?, last_name = ?, username = ?, email = ?, role = ?, profile_picture = ? WHERE id = ?',
+      [
+        first_name ?? null,
+        last_name ?? null,
+        username ?? null,
+        email ?? null,
+        role ?? 'customer',
+        finalPicture,
+        id
+      ]
     );
     return this.findById(id);
   },
@@ -60,7 +100,15 @@ const UserModel = {
     const salt = await bcrypt.genSalt(12);
     const password_hash = await bcrypt.hash(newPassword, salt);
 
-    await query('UPDATE users SET password_hash = ? WHERE id = ?', [password_hash, id]);
+    await query('UPDATE users SET password_hash = ?, is_temp_password = 0 WHERE id = ?', [password_hash, id]);
+    return true;
+  },
+
+  async resetPasswordWithTemp(id, tempPassword) {
+    const salt = await bcrypt.genSalt(12);
+    const password_hash = await bcrypt.hash(tempPassword, salt);
+
+    await query('UPDATE users SET password_hash = ?, is_temp_password = 1 WHERE id = ?', [password_hash, id]);
     return true;
   },
 
@@ -71,7 +119,7 @@ const UserModel = {
 
   async getPendingUsers() {
     return await query(
-      `SELECT u.id, u.first_name, u.last_name, u.email, u.role, u.is_active, u.created_at,
+      `SELECT u.id, u.first_name, u.last_name, u.username, u.email, u.role, u.is_active, u.is_temp_password, u.profile_picture, u.created_at,
               c.phone, c.address
        FROM users u
        LEFT JOIN customers c ON c.user_id = u.id
@@ -91,8 +139,11 @@ const UserModel = {
 
   async getProfile(userId) {
     const rows = await query(
-      `SELECT u.id, u.first_name, u.last_name, u.email, u.role, u.is_active, u.created_at,
-              c.phone, c.address
+      `SELECT u.id, u.first_name, u.last_name, u.username, u.email, u.role, u.is_active, u.is_temp_password,
+              COALESCE(u.profile_picture, c.profile_image) AS profile_picture,
+              COALESCE(c.profile_image, u.profile_picture) AS profile_image,
+              u.created_at,
+              c.phone, c.contact_number, c.address
        FROM users u
        LEFT JOIN customers c ON c.user_id = u.id
        WHERE u.id = ?`,
@@ -101,25 +152,51 @@ const UserModel = {
     return rows[0] || null;
   },
 
-  async updateProfile(userId, { first_name, last_name, phone, address }) {
+  async updateProfile(userId, { first_name, last_name, username, email, phone, contact_number, address, profile_picture }) {
+    const cleanFirstName = first_name ?? null;
+    const cleanLastName = last_name ?? null;
+    const cleanUsername = username ?? null;
+    const cleanEmail = email ?? null;
+    const cleanPhone = (contact_number || phone) ?? null;
+    const cleanAddress = address ?? null;
+
+    // Fetch existing user to preserve profile_picture if profile_picture is undefined
+    const currentUser = await this.findById(userId);
+    let finalProfilePicture = currentUser ? currentUser.profile_picture : null;
+    
+    if (profile_picture !== undefined) {
+      finalProfilePicture = profile_picture ? profile_picture : null;
+    }
+
     await query(
-      'UPDATE users SET first_name = ?, last_name = ? WHERE id = ?',
-      [first_name, last_name, userId]
+      'UPDATE users SET first_name = ?, last_name = ?, email = ?, username = ?, profile_picture = ? WHERE id = ?',
+      [cleanFirstName, cleanLastName, cleanEmail, cleanUsername, finalProfilePicture, userId]
     );
 
     const existingCust = await query('SELECT id FROM customers WHERE user_id = ?', [userId]);
     if (existingCust.length > 0) {
       await query(
-        'UPDATE customers SET phone = ?, address = ? WHERE user_id = ?',
-        [phone || null, address || null, userId]
+        'UPDATE customers SET phone = ?, contact_number = ?, address = ?, profile_image = ?, username = ? WHERE user_id = ?',
+        [cleanPhone, cleanPhone, cleanAddress, finalProfilePicture, cleanUsername, userId]
       );
-    } else {
+    } else if (currentUser && currentUser.role === 'customer' && (cleanPhone || cleanAddress)) {
       await query(
-        'INSERT INTO customers (user_id, phone, address) VALUES (?, ?, ?)',
-        [userId, phone || null, address || null]
+        'INSERT INTO customers (user_id, phone, contact_number, address, profile_image, username) VALUES (?, ?, ?, ?, ?, ?)',
+        [userId, cleanPhone, cleanPhone, cleanAddress, finalProfilePicture, cleanUsername]
       );
     }
 
+    return this.getProfile(userId);
+  },
+
+  async updateProfilePicture(userId, profile_picture) {
+    const cleanPic = profile_picture ?? null;
+    await query('UPDATE users SET profile_picture = ? WHERE id = ?', [cleanPic, userId]);
+    
+    const existingCust = await query('SELECT id FROM customers WHERE user_id = ?', [userId]);
+    if (existingCust.length > 0) {
+      await query('UPDATE customers SET profile_image = ? WHERE user_id = ?', [cleanPic, userId]);
+    }
     return this.getProfile(userId);
   }
 };

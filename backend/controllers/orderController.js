@@ -1,5 +1,6 @@
 const OrderModel = require('../models/orderModel');
 const CustomerModel = require('../models/customerModel');
+const { query } = require('../config/db');
 
 const getOrders = async (req, res, next) => {
   try {
@@ -35,8 +36,23 @@ const getMyOrders = async (req, res, next) => {
 
 const createOrder = async (req, res, next) => {
   try {
-    const customer = await CustomerModel.getByUserId(req.user.id);
-    if (!customer) return res.status(400).json({ message: 'Only registered customer accounts can place online pre-orders' });
+    let customer = await CustomerModel.getByUserId(req.user.id);
+
+    if (!customer || !customer.customer_id) {
+      const existingCustomer = await CustomerModel.getByUserId(req.user.id);
+      if (!existingCustomer || !existingCustomer.customer_id) {
+        await query(
+          'INSERT INTO customers (user_id, phone, address) VALUES (?, ?, ?)',
+          [req.user.id, null, null]
+        );
+      }
+      customer = await CustomerModel.getByUserId(req.user.id);
+    }
+
+    const customerId = customer?.customer_id || customer?.id;
+    if (!customerId) {
+      return res.status(400).json({ message: 'Only registered customer accounts can place online pre-orders' });
+    }
 
     const { items, notes } = req.body;
     if (!items || !Array.isArray(items) || items.length === 0) {
@@ -44,7 +60,7 @@ const createOrder = async (req, res, next) => {
     }
 
     const order = await OrderModel.createOrder({
-      customer_id: customer.id,
+      customer_id: customerId,
       items,
       notes
     });

@@ -13,6 +13,12 @@ async function ensureColumns() {
       // Column may already exist
     }
 
+    try {
+      await query('ALTER TABLE users ADD COLUMN is_temp_password TINYINT(1) NOT NULL DEFAULT 0');
+    } catch (e) {
+      // Column may already exist
+    }
+
     // Add columns to customers if missing
     try {
       await query('ALTER TABLE customers ADD COLUMN profile_image LONGTEXT NULL');
@@ -43,7 +49,7 @@ const CustomerModel = {
   async getAll() {
     await ensureColumns();
     const sql = `
-      SELECT c.*, u.first_name, u.last_name, u.email, u.is_active,
+      SELECT c.*, u.first_name, u.last_name, u.email, u.is_active, u.is_temp_password,
              COALESCE(c.username, u.username) AS username,
              COALESCE(c.contact_number, c.phone) AS contact_number
       FROM customers c
@@ -63,6 +69,7 @@ const CustomerModel = {
         u.email,
         u.role,
         u.is_active,
+        u.is_temp_password,
         COALESCE(u.username, c.username) AS username,
         c.id AS customer_id,
         c.profile_image,
@@ -80,7 +87,7 @@ const CustomerModel = {
   async getById(id) {
     await ensureColumns();
     const sql = `
-      SELECT c.*, u.first_name, u.last_name, u.email, u.is_active,
+      SELECT c.*, u.first_name, u.last_name, u.email, u.is_active, u.is_temp_password,
              COALESCE(c.username, u.username) AS username,
              COALESCE(c.contact_number, c.phone) AS contact_number
       FROM customers c
@@ -147,7 +154,7 @@ const CustomerModel = {
   },
 
   async updatePasswordHash(user_id, password_hash) {
-    await query('UPDATE users SET password_hash = ? WHERE id = ?', [password_hash, user_id]);
+    await query('UPDATE users SET password_hash = ?, is_temp_password = 0 WHERE id = ?', [password_hash, user_id]);
     return true;
   }
 };
