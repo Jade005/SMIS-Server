@@ -2,38 +2,41 @@ const { query } = require('../config/db');
 
 const ReportModel = {
   async getSalesReport({ period = 'daily', date = null }) {
-    let sql = `
+    let dateSql = '';
+    const dateParams = [];
+
+    if (period === 'daily') {
+      if (date) {
+        dateSql = 'AND DATE(s.created_at) = ?';
+        dateParams.push(date);
+      } else {
+        // Use MySQL CURDATE() to avoid JS UTC/local timezone mismatch
+        dateSql = 'AND DATE(s.created_at) = CURDATE()';
+      }
+    } else if (period === 'weekly') {
+      dateSql = 'AND s.created_at >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)';
+    } else if (period === 'monthly') {
+      dateSql = 'AND s.created_at >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)';
+    }
+
+    const salesSql = `
       SELECT s.id, s.receipt_no, s.subtotal, s.discount, s.total_amount, s.payment_method, s.created_at,
              CONCAT(u.first_name, ' ', u.last_name) AS cashier_name
       FROM sales s
       INNER JOIN users u ON s.cashier_id = u.id
-      WHERE 1=1
+      WHERE 1=1 ${dateSql}
+      ORDER BY s.created_at DESC
     `;
-    const params = [];
-
-    if (period === 'daily') {
-      const targetDate = date || new Date().toISOString().slice(0, 10);
-      sql += ' AND DATE(s.created_at) = ?';
-      params.push(targetDate);
-    } else if (period === 'weekly') {
-      sql += ' AND s.created_at >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)';
-    } else if (period === 'monthly') {
-      sql += ' AND s.created_at >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)';
-    }
-
-    sql += ' ORDER BY s.created_at DESC';
-    const sales = await query(sql, params);
+    const sales = await query(salesSql, dateParams);
 
     const summarySql = `
       SELECT COUNT(id) AS total_transactions,
              COALESCE(SUM(total_amount), 0) AS total_revenue,
              COALESCE(AVG(total_amount), 0) AS average_transaction_value
-      FROM sales
-      WHERE ${period === 'daily' ? 'DATE(created_at) = ?' : period === 'weekly' ? 'created_at >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)' : 'created_at >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)'}
+      FROM sales s
+      WHERE 1=1 ${dateSql}
     `;
-
-    const summaryParams = period === 'daily' ? [date || new Date().toISOString().slice(0, 10)] : [];
-    const summary = await query(summarySql, summaryParams);
+    const summary = await query(summarySql, dateParams);
 
     return {
       period,

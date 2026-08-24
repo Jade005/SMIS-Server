@@ -45,7 +45,7 @@ router.patch('/:id/password', authorize('admin'), resetPassword);
 router.get('/:id', authorizeSelfOrAdmin, getUserById);
 router.put('/:id', authorizeSelfOrAdmin, updateUser);
 
-// Admin + Cashier can register new accounts
-router.post('/', authorize('admin', 'cashier'), createUser);
+// Admin-only can register new accounts (Cashier access removed)
+router.post('/', authorize('admin'), createUser);
 
 module.exports = router;

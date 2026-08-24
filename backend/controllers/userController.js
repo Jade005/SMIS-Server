@@ -60,15 +60,19 @@ const createUser = async (req, res, next) => {
             profile_picture: profile_picture || null
         });
 
-        if (role === 'customer' && (phone || address)) {
+        if (role === 'customer') {
             const { query } = require('../config/db');
             await query(
-                'INSERT INTO customers (user_id, phone, address, profile_image) VALUES (?, ?, ?, ?)',
-                [id, phone || null, address || null, profile_picture || null]
+                'INSERT INTO customers (user_id, phone, contact_number, address, profile_image, username) VALUES (?, ?, ?, ?, ?, ?)',
+                [id, phone || null, phone || null, address || null, profile_picture || null, finalUsername]
             );
         }
 
         const fullName = `${first_name} ${last_name}`;
+
+        // Audit log recording Admin registration action
+        const adminActor = req.user ? `Admin ID ${req.user.id} (${req.user.username || req.user.email})` : 'Admin';
+        console.log(`[AUDIT] [${new Date().toISOString()}] ${adminActor} registered new ${role} account: User ID ${id} (${fullName}, email: ${email}, username: ${finalUsername}, status: ACTIVE/AUTO-APPROVED).`);
 
         const emailResult = await sendAccountCredentialsEmail({
             email,
@@ -246,20 +250,6 @@ const changePassword = async (req, res, next) => {
     } catch (error) {
         next(error);
     }
-};
-
-module.exports = {
-    getUsers,
-    getUserById,
-    createUser,
-    updateUser,
-    toggleUserStatus,
-    resetPassword,
-    getPendingUsers,
-    approveUser,
-    getProfile,
-    updateProfile,
-    changePassword
 };
 
 module.exports = {
