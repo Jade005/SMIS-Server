@@ -60,6 +60,26 @@ async function runMigration() {
       }
     }
 
+    // 6. Add temp_password_plain column to users table if missing
+    try {
+      await query('ALTER TABLE users ADD COLUMN temp_password_plain VARCHAR(255) NULL AFTER is_temp_password');
+      console.log('✅ Added "temp_password_plain" column to users table.');
+    } catch (e) {
+      if (e.code === 'ER_DUP_FIELDNAME') {
+        console.log('ℹ️ "temp_password_plain" column already exists in users table.');
+      } else {
+        console.log('Note on temp_password_plain column:', e.message);
+      }
+    }
+
+    // Backfill plain temp password for existing active temp password users
+    await query(`
+      UPDATE users 
+      SET temp_password_plain = CONCAT(LOWER(REPLACE(first_name, ' ', '')), LOWER(REPLACE(last_name, ' ', '')), '123')
+      WHERE is_temp_password = 1 AND (temp_password_plain IS NULL OR temp_password_plain = '')
+    `);
+    console.log('✅ Backfilled temp_password_plain for active temp password users.');
+
     console.log('🎉 Migration completed successfully!');
     process.exit(0);
   } catch (error) {

@@ -7,8 +7,9 @@ const {
   updateUser,
   toggleUserStatus,
   resetPassword,
-  getPendingUsers,
-  approveUser,
+  getPendingRegistrations,
+  approveRegistration,
+  rejectRegistration,
   getProfile,
   updateProfile
 } = require('../controllers/userController');
@@ -36,8 +37,9 @@ router.put('/profile', updateProfile);
 
 // Admin-only management routes
 router.get('/', authorize('admin'), getUsers);
-router.get('/pending', authorize('admin'), getPendingUsers);
-router.patch('/:id/approve', authorize('admin'), approveUser);
+router.get('/pending', authorize('admin'), getPendingRegistrations);
+router.patch('/registrations/:id/approve', authorize('admin'), approveRegistration);
+router.patch('/registrations/:id/reject', authorize('admin'), rejectRegistration);
 router.patch('/:id/status', authorize('admin'), toggleUserStatus);
 router.patch('/:id/password', authorize('admin'), resetPassword);
 

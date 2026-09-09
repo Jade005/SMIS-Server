@@ -151,7 +151,97 @@ function logEmailFallback(mailOptions, username, tempPassword) {
   console.log(`📧 Temporary Password: ${tempPassword}`);
   console.log('====================================================');
 }
+async function sendActivationEmail(email, fullName, activationToken) {
+  const subject = 'Action Required: Activate Your Account';
+  const actionText = 'Your account has been approved by the system administrator. Please set up your password to activate your account.';
+  
+  const setPasswordUrl = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/set-password?token=${activationToken}`;
+
+  const htmlContent = `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="utf-8">
+      <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f8fafc; color: #1e293b; margin: 0; padding: 20px; }
+        .container { max-width: 580px; margin: 0 auto; background: #ffffff; border-radius: 12px; border: 1px solid #e2e8f0; overflow: hidden; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05); }
+        .header { background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%); padding: 24px; text-align: center; color: #ffffff; }
+        .header h1 { margin: 0; font-size: 20px; font-weight: 800; }
+        .content { padding: 28px 24px; }
+        .btn { display: inline-block; background: #2563eb; color: #ffffff; text-decoration: none; padding: 12px 24px; border-radius: 8px; font-weight: 700; font-size: 14px; margin-top: 20px; text-align: center; }
+        .footer { background: #f8fafc; padding: 16px; text-align: center; font-size: 12px; color: #64748b; border-top: 1px solid #e2e8f0; }
+      </style>
+    </head>
+    <body>
+      <div class="container">
+        <div class="header">
+          <h1>dYc Slaughterhouse MIS</h1>
+          <p>Account Activation Required</p>
+        </div>
+        <div class="content">
+          <p>Hello <strong>${fullName}</strong>,</p>
+          <p>${actionText}</p>
+          <div style="text-align: center;">
+            <a href="${setPasswordUrl}" class="btn">Set Up My Password</a>
+          </div>
+          <p style="margin-top: 24px; font-size: 13px; color: #64748b;">If the button above does not work, copy and paste the following link into your browser:<br/>${setPasswordUrl}</p>
+        </div>
+        <div class="footer">
+          Slaughterhouse Meat Inventory and Sales Management System<br>
+          This is an automated system notification.
+        </div>
+      </div>
+    </body>
+    </html>
+  `;
+
+  const textContent = `
+Hello ${fullName},
+
+${actionText}
+
+Please use the following link to set your password and activate your account:
+${setPasswordUrl}
+
+Slaughterhouse Meat Inventory and Sales Management System
+  `.trim();
+
+  const mailOptions = {
+    from: process.env.EMAIL_FROM || '"SMIS Admin System" <no-reply@smis.local>',
+    to: email,
+    subject: subject,
+    text: textContent,
+    html: htmlContent
+  };
+
+  const transporter = createTransporter();
+
+  if (transporter) {
+    try {
+      const info = await transporter.sendMail(mailOptions);
+      console.log(`o%,? Email sent successfully to ${email} (Message ID: ${info.messageId})`);
+      return { success: true, messageId: info.messageId };
+    } catch (err) {
+      console.error(`s,? Email sending failed via SMTP (${err.message}).`);
+      logActivationEmailFallback(mailOptions, setPasswordUrl);
+      return { success: false, error: err.message, fallback: true };
+    }
+  } else {
+    console.log(`,1,? SMTP not configured in .env. Logging activation email to console fallback:`);
+    logActivationEmailFallback(mailOptions, setPasswordUrl);
+    return { success: true, fallback: true };
+  }
+}
+
+function logActivationEmailFallback(mailOptions, setPasswordUrl) {
+  console.log('====================================================');
+  console.log(`dY"  [EMAIL FALLBACK] Subject: ${mailOptions.subject}`);
+  console.log(`dY"  To: ${mailOptions.to}`);
+  console.log(`dY"  Activation Link: ${setPasswordUrl}`);
+  console.log('====================================================');
+}
 
 module.exports = {
-  sendAccountCredentialsEmail
+  sendAccountCredentialsEmail,
+  sendActivationEmail
 };

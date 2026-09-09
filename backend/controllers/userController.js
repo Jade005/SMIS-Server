@@ -87,6 +87,7 @@ const createUser = async (req, res, next) => {
         res.status(201).json({
             message: `Account created successfully for ${fullName}. Credentials email sent to ${email}.`,
             user: createdUser,
+            temp_password: tempPassword,
             email_sent: emailResult.success,
             email_fallback: Boolean(emailResult.fallback)
         });
@@ -150,22 +151,101 @@ const resetPassword = async (req, res, next) => {
     }
 };
 
-const getPendingUsers = async (req, res, next) => {
+const getPendingRegistrations = async (req, res, next) => {
     try {
-        const users = await UserModel.getPendingUsers();
-        res.json(users);
+        const registrations = await UserModel.getPendingRegistrations();
+        res.json(registrations);
     } catch (error) {
         next(error);
     }
 };
 
-const approveUser = async (req, res, next) => {
+const approveRegistration = async (req, res, next) => {
     try {
-        const user = await UserModel.approveUser(req.params.id);
-        if (!user) {
-            return res.status(404).json({ message: 'User not found or not a pending customer' });
+        const reg = await UserModel.getRegistrationById(req.params.id);
+        if (!reg || reg.status !== 'pending') {
+            return res.status(404).json({ message: 'Registration not found or not pending.' });
         }
-        res.json({ message: `Account for ${user.first_name} ${user.last_name} approved successfully.`, user });
+
+        // Check for existing user with this email — prevent duplicates
+        const existingEmail = await UserModel.findByEmail(reg.email);
+        if (existingEmail) {
+            return res.status(400).json({ message: 'An account with this email already exists.' });
+        }
+
+        // Generate a unique username from first/last name
+        let finalUsername = reg.username;
+        if (!finalUsername) {
+            finalUsername = `${reg.first_name.trim().toLowerCase()}.${reg.last_name.trim().toLowerCase()}`.replace(/[^a-z0-9.]/g, '');
+        }
+        const existingUser = await UserModel.findByUsername(finalUsername);
+        if (existingUser) {
+            finalUsername = `${finalUsername}${Math.floor(100 + Math.random() * 900)}`;
+        }
+
+        // Auto-generate a secure temporary password for the customer
+        const tempPassword = generateTemporaryPassword(10);
+
+        // Create the active customer account with the generated password
+        const userId = await UserModel.createUser({
+            first_name: reg.first_name,
+            last_name: reg.last_name,
+            username: finalUsername,
+            email: reg.email,
+            password: tempPassword,
+            role: 'customer',
+            is_active: 1,
+            is_temp_password: 1,
+            temp_password_plain: tempPassword
+        });
+
+        const { query } = require('../config/db');
+        await query(
+            'INSERT INTO customers (user_id, phone, address, username) VALUES (?, ?, ?, ?)',
+            [userId, reg.phone || null, reg.address || null, finalUsername]
+        );
+
+        // Mark registration as approved
+        await UserModel.updateRegistrationStatus(reg.id, 'approved');
+
+        const user = await UserModel.findById(userId);
+        const fullName = `${user.first_name} ${user.last_name}`;
+
+        // Log the approval action
+        const adminActor = req.user ? `Admin ID ${req.user.id} (${req.user.username || req.user.email})` : 'Admin';
+        console.log(`[AUDIT] [${new Date().toISOString()}] ${adminActor} approved registration for ${fullName} (email: ${reg.email}, username: ${finalUsername}).`);
+
+        // Send credentials email (graceful — non-fatal if SMTP not configured)
+        const emailResult = await sendAccountCredentialsEmail({
+            email: user.email,
+            fullName,
+            username: finalUsername,
+            tempPassword,
+            isReset: false
+        });
+
+        res.json({
+            message: `Registration for ${fullName} approved! Account is now active. Share the generated password with the customer.`,
+            user,
+            temp_password: tempPassword,
+            email_sent: emailResult.success,
+            email_fallback: Boolean(emailResult.fallback)
+        });
+    } catch (error) {
+        next(error);
+    }
+};
+
+const rejectRegistration = async (req, res, next) => {
+    try {
+        const reg = await UserModel.getRegistrationById(req.params.id);
+        if (!reg || reg.status !== 'pending') {
+            return res.status(404).json({ message: 'Registration not found or not pending.' });
+        }
+
+        await UserModel.updateRegistrationStatus(reg.id, 'rejected');
+
+        res.json({ message: `Registration for ${reg.first_name} ${reg.last_name} rejected.` });
     } catch (error) {
         next(error);
     }
@@ -259,8 +339,9 @@ module.exports = {
     updateUser,
     toggleUserStatus,
     resetPassword,
-    getPendingUsers,
-    approveUser,
+    getPendingRegistrations,
+    approveRegistration,
+    rejectRegistration,
     getProfile,
     updateProfile,
     changePassword

@@ -4,9 +4,11 @@ const { generateBatchNo } = require('../utils/receiptGenerator');
 const InventoryModel = {
   async getAll(filters = {}) {
     let sql = `
-      SELECT i.*, p.name AS product_name, p.meat_type, p.meat_cut, s.name AS supplier_name
+      SELECT i.*, p.name AS product_name, p.meat_type, p.meat_cut, p.image_url, p.category_id,
+             c.name AS category_name, s.name AS supplier_name
       FROM inventory i
       INNER JOIN products p ON i.product_id = p.id
+      LEFT JOIN categories c ON p.category_id = c.id
       INNER JOIN suppliers s ON i.supplier_id = s.id
       WHERE 1=1
     `;
@@ -33,9 +35,11 @@ const InventoryModel = {
 
   async getById(id) {
     const sql = `
-      SELECT i.*, p.name AS product_name, p.meat_type, p.meat_cut, s.name AS supplier_name
+      SELECT i.*, p.name AS product_name, p.meat_type, p.meat_cut, p.image_url, p.category_id,
+             c.name AS category_name, s.name AS supplier_name
       FROM inventory i
       INNER JOIN products p ON i.product_id = p.id
+      LEFT JOIN categories c ON p.category_id = c.id
       INNER JOIN suppliers s ON i.supplier_id = s.id
       WHERE i.id = ?
     `;

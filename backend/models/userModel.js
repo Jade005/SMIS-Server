@@ -3,13 +3,13 @@ const bcrypt = require('bcryptjs');
 
 const UserModel = {
   async findByEmail(email) {
-    const users = await query('SELECT id, first_name, last_name, username, email, password_hash, role, is_active, is_temp_password, profile_picture, created_at, updated_at FROM users WHERE email = ?', [email ?? null]);
+    const users = await query('SELECT id, first_name, last_name, username, email, password_hash, role, is_active, is_temp_password, temp_password_plain, profile_picture, created_at, updated_at FROM users WHERE email = ?', [email ?? null]);
     return users[0] || null;
   },
 
   async findByUsername(username) {
     if (!username) return null;
-    const users = await query('SELECT id, first_name, last_name, username, email, password_hash, role, is_active, is_temp_password, profile_picture, created_at, updated_at FROM users WHERE username = ?', [username ?? null]);
+    const users = await query('SELECT id, first_name, last_name, username, email, password_hash, role, is_active, is_temp_password, temp_password_plain, profile_picture, created_at, updated_at FROM users WHERE username = ?', [username ?? null]);
     return users[0] || null;
   },
 
@@ -17,7 +17,7 @@ const UserModel = {
     if (!identifier) return null;
     const cleanId = identifier ?? null;
     const users = await query(
-      'SELECT id, first_name, last_name, username, email, password_hash, role, is_active, is_temp_password, profile_picture, created_at, updated_at FROM users WHERE email = ? OR username = ?',
+      'SELECT id, first_name, last_name, username, email, password_hash, role, is_active, is_temp_password, temp_password_plain, profile_picture, created_at, updated_at FROM users WHERE email = ? OR username = ?',
       [cleanId, cleanId]
     );
     return users[0] || null;
@@ -25,14 +25,14 @@ const UserModel = {
 
   async findById(id) {
     const users = await query(
-      'SELECT id, first_name, last_name, username, email, role, is_active, is_temp_password, profile_picture, created_at, updated_at FROM users WHERE id = ?',
+      'SELECT id, first_name, last_name, username, email, role, is_active, is_temp_password, temp_password_plain, profile_picture, created_at, updated_at FROM users WHERE id = ?',
       [id ?? null]
     );
     return users[0] || null;
   },
 
   async getAllUsers(filters = {}) {
-    let sql = 'SELECT id, first_name, last_name, username, email, role, is_active, is_temp_password, profile_picture, created_at FROM users WHERE 1=1';
+    let sql = 'SELECT id, first_name, last_name, username, email, role, is_active, is_temp_password, temp_password_plain, profile_picture, created_at FROM users WHERE 1=1';
     const params = [];
 
     if (filters.role) {
@@ -49,15 +49,19 @@ const UserModel = {
     return await query(sql, params);
   },
 
-  async createUser({ first_name, last_name, username, email, password, role = 'customer', is_active, is_temp_password = 0, profile_picture = null }) {
-    const salt = await bcrypt.genSalt(12);
-    const password_hash = await bcrypt.hash(password, salt);
+  async createUser({ first_name, last_name, username, email, password, role = 'customer', is_active, is_temp_password = 0, temp_password_plain = null, profile_picture = null }) {
+    let password_hash = null;
+    if (password) {
+      const salt = await bcrypt.genSalt(12);
+      password_hash = await bcrypt.hash(password, salt);
+    }
 
     const active = is_active !== undefined ? (is_active ? 1 : 0) : (role === 'customer' ? 0 : 1);
     const tempPassFlag = is_temp_password ? 1 : 0;
+    const plainTemp = tempPassFlag && password ? (temp_password_plain || password) : null;
 
     const result = await query(
-      'INSERT INTO users (first_name, last_name, username, email, password_hash, role, is_active, is_temp_password, profile_picture) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      'INSERT INTO users (first_name, last_name, username, email, password_hash, role, is_active, is_temp_password, temp_password_plain, profile_picture) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       [
         first_name ?? null,
         last_name ?? null,
@@ -67,6 +71,7 @@ const UserModel = {
         role,
         active,
         tempPassFlag,
+        plainTemp,
         profile_picture ?? null
       ]
     );
@@ -100,7 +105,7 @@ const UserModel = {
     const salt = await bcrypt.genSalt(12);
     const password_hash = await bcrypt.hash(newPassword, salt);
 
-    await query('UPDATE users SET password_hash = ?, is_temp_password = 0 WHERE id = ?', [password_hash, id]);
+    await query('UPDATE users SET password_hash = ?, is_temp_password = 0, temp_password_plain = NULL WHERE id = ?', [password_hash, id]);
     return true;
   },
 
@@ -108,7 +113,7 @@ const UserModel = {
     const salt = await bcrypt.genSalt(12);
     const password_hash = await bcrypt.hash(tempPassword, salt);
 
-    await query('UPDATE users SET password_hash = ?, is_temp_password = 1 WHERE id = ?', [password_hash, id]);
+    await query('UPDATE users SET password_hash = ?, is_temp_password = 1, temp_password_plain = ? WHERE id = ?', [password_hash, tempPassword, id]);
     return true;
   },
 
@@ -119,7 +124,7 @@ const UserModel = {
 
   async getPendingUsers() {
     return await query(
-      `SELECT u.id, u.first_name, u.last_name, u.username, u.email, u.role, u.is_active, u.is_temp_password, u.profile_picture, u.created_at,
+      `SELECT u.id, u.first_name, u.last_name, u.username, u.email, u.role, u.is_active, u.is_temp_password, u.temp_password_plain, u.profile_picture, u.created_at,
               c.phone, c.address
        FROM users u
        LEFT JOIN customers c ON c.user_id = u.id
@@ -198,6 +203,27 @@ const UserModel = {
       await query('UPDATE customers SET profile_image = ? WHERE user_id = ?', [cleanPic, userId]);
     }
     return this.getProfile(userId);
+  },
+
+  async createRegistration({ first_name, last_name, username, email, phone, address }) {
+    const result = await query(
+      'INSERT INTO pending_registrations (first_name, last_name, username, email, phone, address, status) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      [first_name, last_name, username, email, phone, address, 'pending']
+    );
+    return result.insertId;
+  },
+
+  async getPendingRegistrations() {
+    return await query("SELECT * FROM pending_registrations WHERE status = 'pending' ORDER BY created_at DESC");
+  },
+
+  async getRegistrationById(id) {
+    const rows = await query('SELECT * FROM pending_registrations WHERE id = ?', [id]);
+    return rows[0] || null;
+  },
+
+  async updateRegistrationStatus(id, status) {
+    return await query('UPDATE pending_registrations SET status = ? WHERE id = ?', [status, id]);
   }
 };
 

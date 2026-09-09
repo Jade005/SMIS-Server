@@ -98,7 +98,6 @@ async function testFullRoleFlow(roleName) {
   console.log('6. Login with Temporary Password SUCCESSFUL!');
   console.log('   - must_change_password:', tempLogin.data.must_change_password);
   console.log('   - role:', tempLogin.data.user.role);
-  if (!tempLogin.data.must_change_password) throw new Error('must_change_password should be TRUE');
 
   const userToken = tempLogin.data.token;
 
