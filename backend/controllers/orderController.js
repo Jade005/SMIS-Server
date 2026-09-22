@@ -25,9 +25,12 @@ const getOrderById = async (req, res, next) => {
 const getMyOrders = async (req, res, next) => {
   try {
     const customer = await CustomerModel.getByUserId(req.user.id);
-    if (!customer) return res.status(404).json({ message: 'Customer profile not found' });
+    if (!customer || !customer.customer_id) {
+      // No customer profile — return empty list, never fall back to all orders
+      return res.json([]);
+    }
 
-    const orders = await OrderModel.getAll({ customer_id: customer.id });
+    const orders = await OrderModel.getAll({ customer_id: customer.customer_id });
     res.json(orders);
   } catch (error) {
     next(error);
@@ -91,6 +94,12 @@ const cancelOrder = async (req, res, next) => {
   try {
     const order = await OrderModel.getById(req.params.id);
     if (!order) return res.status(404).json({ message: 'Order not found' });
+
+    // Verify ownership: the order must belong to the logged-in customer
+    const customer = await CustomerModel.getByUserId(req.user.id);
+    if (!customer || !customer.customer_id || order.customer_id !== customer.customer_id) {
+      return res.status(403).json({ message: 'You are not authorized to cancel this order' });
+    }
 
     if (order.status !== 'pending') {
       return res.status(400).json({ message: 'Only pending orders can be cancelled' });

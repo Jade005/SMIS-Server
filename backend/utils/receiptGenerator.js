@@ -1,19 +1,27 @@
 // Receipt number generator & Receipt formatter utility
 
+const getLocalDateString = () => {
+  const d = new Date();
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${year}${month}${day}`;
+};
+
 const generateReceiptNo = () => {
-  const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+  const dateStr = getLocalDateString();
   const randomNum = Math.floor(1000 + Math.random() * 9000);
   return `RCP-${dateStr}-${randomNum}`;
 };
 
 const generateOrderNo = () => {
-  const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+  const dateStr = getLocalDateString();
   const randomNum = Math.floor(1000 + Math.random() * 9000);
   return `ORD-${dateStr}-${randomNum}`;
 };
 
 const generateBatchNo = (productCode = 'BAT') => {
-  const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+  const dateStr = getLocalDateString();
   const randomNum = Math.floor(100 + Math.random() * 900);
   return `B-${dateStr}-${randomNum}`;
 };
