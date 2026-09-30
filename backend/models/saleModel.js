@@ -121,14 +121,25 @@ const SaleModel = {
         });
       }
 
-      const total_amount = subtotal - Number(discount);
-      const change_amount = Number(amount_tendered) >= total_amount ? Number(amount_tendered) - total_amount : 0;
+      const numDiscount = Math.max(0, Number(discount) || 0);
+      if (numDiscount > subtotal) {
+        throw new Error(`Discount (₱${numDiscount.toFixed(2)}) cannot exceed subtotal (₱${subtotal.toFixed(2)})`);
+      }
+
+      const total_amount = Math.max(0, Number((subtotal - numDiscount).toFixed(2)));
+      const numTendered = Math.max(0, Number(amount_tendered) || 0);
+
+      if (payment_method === 'cash' && numTendered < total_amount) {
+        throw new Error(`Amount tendered (₱${numTendered.toFixed(2)}) is less than total due (₱${total_amount.toFixed(2)})`);
+      }
+
+      const change_amount = numTendered >= total_amount ? Number((numTendered - total_amount).toFixed(2)) : 0;
 
       // Insert sale header
       const [saleResult] = await connection.query(
         `INSERT INTO sales (cashier_id, customer_id, receipt_no, subtotal, discount, total_amount, payment_method, amount_tendered, change_amount, notes)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [cashier_id, customer_id, receipt_no, subtotal, discount, total_amount, payment_method, amount_tendered, change_amount, notes]
+        [cashier_id, customer_id, receipt_no, subtotal, numDiscount, total_amount, payment_method, numTendered, change_amount, notes]
       );
 
       const saleId = saleResult.insertId;
