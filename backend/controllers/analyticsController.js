@@ -22,7 +22,8 @@ const getBestSellers = async (req, res, next) => {
 
 const getSalesByCategory = async (req, res, next) => {
   try {
-    const categories = await AnalyticsModel.getSalesByCategory();
+    const { period } = req.query;
+    const categories = await AnalyticsModel.getSalesByCategory(period);
     res.json(categories);
   } catch (error) {
     next(error);
