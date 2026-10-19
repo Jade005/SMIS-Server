@@ -98,12 +98,86 @@ const createUser = async (req, res, next) => {
 
 const updateUser = async (req, res, next) => {
     try {
-        const { first_name, last_name, username, email, role, profile_picture } = req.body;
+        const { id } = req.params;
+        const { first_name, last_name, full_name, username, email, role, status, is_active, password, profile_picture } = req.body;
+
+        const targetUser = await UserModel.findById(id);
+        if (!targetUser) {
+            return res.status(404).json({ message: 'User not found' });
+        }
+
+        let fName = first_name;
+        let lName = last_name;
+        if ((fName === undefined || lName === undefined) && full_name) {
+            const parts = full_name.trim().split(/\s+/);
+            fName = parts[0] || '';
+            lName = parts.slice(1).join(' ') || '';
+        }
+
+        if (fName !== undefined && !fName.trim()) {
+            return res.status(400).json({ message: 'First name cannot be empty' });
+        }
+        if (lName !== undefined && !lName.trim()) {
+            return res.status(400).json({ message: 'Last name cannot be empty' });
+        }
+
+        if (email !== undefined) {
+            const cleanEmail = email.trim();
+            if (!cleanEmail) {
+                return res.status(400).json({ message: 'Email address cannot be empty' });
+            }
+            const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+            if (!emailRegex.test(cleanEmail)) {
+                return res.status(400).json({ message: 'Please provide a valid email address' });
+            }
+            const existingEmail = await UserModel.findByEmailExcludeId(cleanEmail, id);
+            if (existingEmail) {
+                return res.status(400).json({ message: 'Email already in use' });
+            }
+        }
+
+        if (username !== undefined) {
+            const cleanUsername = username.trim();
+            if (!cleanUsername) {
+                return res.status(400).json({ message: 'Username cannot be empty' });
+            }
+            const existingUsername = await UserModel.findByUsernameExcludeId(cleanUsername, id);
+            if (existingUsername) {
+                return res.status(400).json({ message: 'Username already exists' });
+            }
+        }
+
+        // Normalize role
+        let normalizedRole = role;
+        if (normalizedRole) {
+            if (normalizedRole.toLowerCase() === 'user') normalizedRole = 'customer';
+            else normalizedRole = normalizedRole.toLowerCase();
+        }
+
+        // Normalize status / is_active
+        let activeVal = is_active;
+        if (status !== undefined) {
+            const s = String(status).toLowerCase();
+            if (s === 'active') activeVal = 1;
+            else if (s === 'inactive' || s === 'pending') activeVal = 0;
+        }
+
         let savedAvatar = undefined;
         if (profile_picture) {
-            savedAvatar = saveAvatarImage(profile_picture, req.params.id);
+            savedAvatar = saveAvatarImage(profile_picture, id);
         }
-        const user = await UserModel.updateUser(req.params.id, { first_name, last_name, username, email, role, profile_picture: savedAvatar });
+
+        const user = await UserModel.updateUser(id, {
+            first_name: fName !== undefined ? fName.trim() : undefined,
+            last_name: lName !== undefined ? lName.trim() : undefined,
+            username: username !== undefined ? username.trim() : undefined,
+            email: email !== undefined ? email.trim() : undefined,
+            role: normalizedRole,
+            is_active: activeVal,
+            password: password && password.trim() ? password.trim() : undefined,
+            profile_picture: savedAvatar
+        });
+
         res.json({ message: 'User updated successfully', user });
     } catch (error) {
         next(error);

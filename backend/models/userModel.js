@@ -13,6 +13,18 @@ const UserModel = {
     return users[0] || null;
   },
 
+  async findByEmailExcludeId(email, excludeId) {
+    if (!email) return null;
+    const users = await query('SELECT id FROM users WHERE email = ? AND id != ?', [email, excludeId]);
+    return users[0] || null;
+  },
+
+  async findByUsernameExcludeId(username, excludeId) {
+    if (!username) return null;
+    const users = await query('SELECT id FROM users WHERE username = ? AND id != ?', [username, excludeId]);
+    return users[0] || null;
+  },
+
   async findByUsernameOrEmail(identifier) {
     if (!identifier) return null;
     const cleanId = identifier ?? null;
@@ -79,25 +91,47 @@ const UserModel = {
     return result.insertId;
   },
 
-  async updateUser(id, { first_name, last_name, username, email, role, profile_picture }) {
+  async updateUser(id, { first_name, last_name, username, email, role, is_active, password, profile_picture }) {
     const currentUser = await this.findById(id);
-    let finalPicture = currentUser ? currentUser.profile_picture : null;
+    if (!currentUser) return null;
+
+    let finalPicture = currentUser.profile_picture;
     if (profile_picture !== undefined) {
       finalPicture = profile_picture ? profile_picture : null;
     }
 
-    await query(
-      'UPDATE users SET first_name = ?, last_name = ?, username = ?, email = ?, role = ?, profile_picture = ? WHERE id = ?',
-      [
-        first_name ?? null,
-        last_name ?? null,
-        username ?? null,
-        email ?? null,
-        role ?? 'customer',
-        finalPicture,
-        id
-      ]
-    );
+    const updates = [];
+    const params = [];
+
+    if (first_name !== undefined) { updates.push('first_name = ?'); params.push(first_name); }
+    if (last_name !== undefined) { updates.push('last_name = ?'); params.push(last_name); }
+    if (username !== undefined) { updates.push('username = ?'); params.push(username); }
+    if (email !== undefined) { updates.push('email = ?'); params.push(email); }
+    if (role !== undefined) { updates.push('role = ?'); params.push(role); }
+    if (is_active !== undefined) { updates.push('is_active = ?'); params.push(is_active ? 1 : 0); }
+    if (profile_picture !== undefined) { updates.push('profile_picture = ?'); params.push(finalPicture); }
+
+    if (password && password.trim()) {
+      const salt = await bcrypt.genSalt(12);
+      const password_hash = await bcrypt.hash(password.trim(), salt);
+      updates.push('password_hash = ?'); params.push(password_hash);
+      updates.push('is_temp_password = 0');
+      updates.push('temp_password_plain = NULL');
+    }
+
+    if (updates.length > 0) {
+      params.push(id);
+      await query(`UPDATE users SET ${updates.join(', ')} WHERE id = ?`, params);
+    }
+
+    if (username !== undefined) {
+      try {
+        await query('UPDATE customers SET username = ? WHERE user_id = ?', [username, id]);
+      } catch (e) {
+        // customers table may not have matching row or column, ignore
+      }
+    }
+
     return this.findById(id);
   },
 
