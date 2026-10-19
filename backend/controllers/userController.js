@@ -186,9 +186,101 @@ const updateUser = async (req, res, next) => {
 
 const toggleUserStatus = async (req, res, next) => {
     try {
+        const { id } = req.params;
         const { is_active } = req.body;
-        const user = await UserModel.toggleStatus(req.params.id, is_active);
-        res.json({ message: `User status changed to ${is_active ? 'active' : 'inactive'}`, user });
+        const user = await UserModel.findById(id);
+        if (!user || user.deleted_at) {
+            return res.status(404).json({ message: 'User not found' });
+        }
+
+        if (req.user && String(req.user.id) === String(id) && !is_active) {
+            return res.status(400).json({ message: 'You cannot deactivate your own account.' });
+        }
+
+        if (user.role === 'admin' && user.is_active && !is_active) {
+            const activeAdmins = await UserModel.countActiveAdmins();
+            if (activeAdmins <= 1) {
+                return res.status(400).json({ message: 'Cannot deactivate the last remaining active administrator.' });
+            }
+        }
+
+        const updated = await UserModel.toggleStatus(id, is_active);
+        res.json({ message: `User status changed to ${is_active ? 'active' : 'inactive'}`, user: updated });
+    } catch (error) {
+        next(error);
+    }
+};
+
+const deactivateUser = async (req, res, next) => {
+    try {
+        const { id } = req.params;
+        const user = await UserModel.findById(id);
+        if (!user || user.deleted_at) {
+            return res.status(404).json({ message: 'User not found' });
+        }
+
+        if (req.user && String(req.user.id) === String(id)) {
+            return res.status(400).json({ message: 'You cannot deactivate your own account.' });
+        }
+
+        if (user.role === 'admin' && user.is_active) {
+            const activeAdmins = await UserModel.countActiveAdmins();
+            if (activeAdmins <= 1) {
+                return res.status(400).json({ message: 'Cannot deactivate the last remaining active administrator.' });
+            }
+        }
+
+        const updated = await UserModel.deactivateUser(id);
+        res.json({ message: 'User deactivated successfully', user: updated });
+    } catch (error) {
+        next(error);
+    }
+};
+
+const activateUser = async (req, res, next) => {
+    try {
+        const { id } = req.params;
+        const user = await UserModel.findById(id);
+        if (!user || user.deleted_at) {
+            return res.status(404).json({ message: 'User not found' });
+        }
+
+        const updated = await UserModel.activateUser(id);
+        res.json({ message: 'User activated successfully', user: updated });
+    } catch (error) {
+        next(error);
+    }
+};
+
+const deleteUser = async (req, res, next) => {
+    try {
+        const { id } = req.params;
+        const user = await UserModel.findById(id);
+        if (!user || user.deleted_at) {
+            return res.status(404).json({ message: 'User not found' });
+        }
+
+        if (req.user && String(req.user.id) === String(id)) {
+            return res.status(400).json({ message: 'You cannot delete your own account.' });
+        }
+
+        if (user.role === 'admin') {
+            const activeAdmins = await UserModel.countActiveAdmins();
+            if (activeAdmins <= 1) {
+                return res.status(400).json({ message: 'Cannot delete the last remaining active administrator.' });
+            }
+        }
+
+        const hasHistory = await UserModel.hasRelatedRecords(id);
+        if (hasHistory) {
+            return res.status(409).json({
+                message: 'This user has related sales/order history and cannot be deleted. Deactivate the account instead.',
+                canDeactivate: true
+            });
+        }
+
+        await UserModel.deleteUser(id);
+        res.json({ message: 'User deleted permanently' });
     } catch (error) {
         next(error);
     }
@@ -412,6 +504,9 @@ module.exports = {
     createUser,
     updateUser,
     toggleUserStatus,
+    deactivateUser,
+    activateUser,
+    deleteUser,
     resetPassword,
     getPendingRegistrations,
     approveRegistration,

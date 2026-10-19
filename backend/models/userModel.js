@@ -44,7 +44,7 @@ const UserModel = {
   },
 
   async getAllUsers(filters = {}) {
-    let sql = 'SELECT id, first_name, last_name, username, email, role, is_active, is_temp_password, temp_password_plain, profile_picture, created_at FROM users WHERE 1=1';
+    let sql = 'SELECT id, first_name, last_name, username, email, role, is_active, is_temp_password, temp_password_plain, profile_picture, created_at, updated_at FROM users WHERE deleted_at IS NULL';
     const params = [];
 
     if (filters.role) {
@@ -152,8 +152,61 @@ const UserModel = {
   },
 
   async toggleStatus(id, is_active) {
-    await query('UPDATE users SET is_active = ? WHERE id = ?', [is_active ? 1 : 0, id]);
+    await query('UPDATE users SET is_active = ?, updated_at = NOW() WHERE id = ?', [is_active ? 1 : 0, id]);
     return this.findById(id);
+  },
+
+  async deactivateUser(id) {
+    await query('UPDATE users SET is_active = 0, updated_at = NOW() WHERE id = ?', [id]);
+    return this.findById(id);
+  },
+
+  async activateUser(id) {
+    await query('UPDATE users SET is_active = 1, updated_at = NOW() WHERE id = ?', [id]);
+    return this.findById(id);
+  },
+
+  async countActiveAdmins() {
+    const rows = await query("SELECT COUNT(*) AS count FROM users WHERE role = 'admin' AND is_active = 1 AND deleted_at IS NULL");
+    return Number(rows[0]?.count || 0);
+  },
+
+  async hasRelatedRecords(userId) {
+    // 1. Check if user is cashier in sales
+    const salesCashier = await query('SELECT COUNT(*) AS count FROM sales WHERE cashier_id = ?', [userId]);
+    if (salesCashier[0]?.count > 0) return true;
+
+    // 2. Check customer records (orders and customer sales)
+    const custRows = await query('SELECT id FROM customers WHERE user_id = ?', [userId]);
+    if (custRows.length > 0) {
+      const custId = custRows[0].id;
+      const custOrders = await query('SELECT COUNT(*) AS count FROM orders WHERE customer_id = ?', [custId]);
+      if (custOrders[0]?.count > 0) return true;
+
+      const custSales = await query('SELECT COUNT(*) AS count FROM sales WHERE customer_id = ?', [custId]);
+      if (custSales[0]?.count > 0) return true;
+    }
+
+    return false;
+  },
+
+  async deleteUser(id) {
+    // Delete linked empty customer row if exists
+    try {
+      await query('DELETE FROM customers WHERE user_id = ?', [id]);
+    } catch (e) {
+      // Ignore if foreign key constraint or non-existent
+    }
+
+    // Attempt hard delete first
+    try {
+      await query('DELETE FROM users WHERE id = ?', [id]);
+      return { hardDeleted: true };
+    } catch (err) {
+      // If foreign key constraint prevents hard delete, soft delete
+      await query('UPDATE users SET deleted_at = NOW(), is_active = 0, updated_at = NOW() WHERE id = ?', [id]);
+      return { hardDeleted: false };
+    }
   },
 
   async getPendingUsers() {

@@ -18,8 +18,12 @@ const login = async (req, res, next) => {
       return res.status(401).json({ message: 'Invalid credentials' });
     }
 
+    if (user.deleted_at) {
+      return res.status(401).json({ message: 'Invalid credentials' });
+    }
+
     if (!user.is_active) {
-      return res.status(403).json({ message: 'Your account is pending admin approval. Please wait for an administrator to approve your account before logging in.' });
+      return res.status(403).json({ message: 'Your account has been deactivated. Contact the administrator.' });
     }
 
     if (!user.password_hash) {

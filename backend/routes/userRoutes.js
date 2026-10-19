@@ -6,6 +6,9 @@ const {
   createUser,
   updateUser,
   toggleUserStatus,
+  deactivateUser,
+  activateUser,
+  deleteUser,
   resetPassword,
   getPendingRegistrations,
   approveRegistration,
@@ -41,6 +44,9 @@ router.get('/pending', authorize('admin'), getPendingRegistrations);
 router.patch('/registrations/:id/approve', authorize('admin'), approveRegistration);
 router.patch('/registrations/:id/reject', authorize('admin'), rejectRegistration);
 router.patch('/:id/status', authorize('admin'), toggleUserStatus);
+router.patch('/:id/deactivate', authorize('admin'), deactivateUser);
+router.patch('/:id/activate', authorize('admin'), activateUser);
+router.delete('/:id', authorize('admin'), deleteUser);
 router.patch('/:id/password', authorize('admin'), resetPassword);
 
 // Self or Admin accessible routes

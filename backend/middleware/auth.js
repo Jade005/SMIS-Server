@@ -16,16 +16,16 @@ const protect = async (req, res, next) => {
       );
 
       const users = await query(
-        'SELECT id, first_name, last_name, email, role, is_active FROM users WHERE id = ?',
+        'SELECT id, first_name, last_name, email, role, is_active, deleted_at FROM users WHERE id = ?',
         [decoded.id]
       );
 
-      if (!users || users.length === 0) {
+      if (!users || users.length === 0 || users[0].deleted_at) {
         return res.status(401).json({ message: 'User not found' });
       }
 
       if (!users[0].is_active) {
-        return res.status(403).json({ message: 'User account is deactivated' });
+        return res.status(403).json({ message: 'Your account has been deactivated. Contact the administrator.' });
       }
 
       req.user = users[0];
