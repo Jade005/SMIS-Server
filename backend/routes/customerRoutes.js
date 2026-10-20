@@ -6,8 +6,10 @@ const {
   changePassword
 } = require('../controllers/customerController');
 const { protect } = require('../middleware/auth');
+const { authorize } = require('../middleware/rbac');
 
 router.use(protect);
+router.use(authorize('customer'));
 
 router.get('/profile', getProfile);
 router.put('/profile', updateProfile);

@@ -3,41 +3,151 @@ const generateToken = require('../utils/generateToken');
 const { generateTemporaryPassword } = require('../utils/passwordHelper');
 const { query } = require('../config/db');
 
+// In-memory rate limiting map for failed login attempts
+// Key: ip + ':' + identifier (normalized)
+const failedAttemptsMap = new Map();
+const MAX_FAILED_ATTEMPTS = 5;
+const LOCKOUT_WINDOW_MS = 15 * 60 * 1000; // 15 minutes lockout
+
+const getRateLimitKey = (req, identifier) => {
+  const ip = req.ip || req.headers['x-forwarded-for'] || req.socket?.remoteAddress || 'unknown';
+  const cleanId = (identifier || '').trim().toLowerCase();
+  return `${ip}:${cleanId}`;
+};
+
+const checkRateLimit = (key) => {
+  const record = failedAttemptsMap.get(key);
+  if (!record) return { locked: false };
+
+  const now = Date.now();
+  if (now - record.firstAttemptTime > LOCKOUT_WINDOW_MS) {
+    failedAttemptsMap.delete(key);
+    return { locked: false };
+  }
+
+  if (record.count >= MAX_FAILED_ATTEMPTS) {
+    const minutesLeft = Math.ceil((LOCKOUT_WINDOW_MS - (now - record.firstAttemptTime)) / 60000);
+    return { locked: true, minutesLeft };
+  }
+
+  return { locked: false };
+};
+
+const recordFailedAttempt = (key) => {
+  const now = Date.now();
+  const record = failedAttemptsMap.get(key);
+  if (!record || now - record.firstAttemptTime > LOCKOUT_WINDOW_MS) {
+    failedAttemptsMap.set(key, { count: 1, firstAttemptTime: now });
+  } else {
+    record.count += 1;
+    failedAttemptsMap.set(key, record);
+  }
+};
+
+const clearFailedAttempts = (key) => {
+  failedAttemptsMap.delete(key);
+};
+
 const login = async (req, res, next) => {
   try {
-    const { email, username, identifier, password } = req.body;
-    const loginId = email || username || identifier;
+    const { email, username, identifier, password, portal } = req.body;
+    const loginId = (email || username || identifier || '').trim();
 
     if (!loginId || !password) {
       return res.status(400).json({ message: 'Please provide email/username and password' });
     }
 
+    // 1. Rate limiting check (5 failed attempts per 15 mins)
+    const rateLimitKey = getRateLimitKey(req, loginId);
+    const rateStatus = checkRateLimit(rateLimitKey);
+    if (rateStatus.locked) {
+      return res.status(429).json({
+        message: 'Too many failed login attempts. Please try again in 15 minutes.'
+      });
+    }
+
+    // 2. Fetch user by username or email from database
     const user = await UserModel.findByUsernameOrEmail(loginId);
 
+    // If user is not found in users table, check if there is a pending registration
     if (!user) {
+      try {
+        const pendingRows = await query(
+          'SELECT id, status FROM pending_registrations WHERE email = ? OR username = ? ORDER BY created_at DESC LIMIT 1',
+          [loginId, loginId]
+        );
+        if (pendingRows && pendingRows.length > 0) {
+          if (pendingRows[0].status === 'pending') {
+            recordFailedAttempt(rateLimitKey);
+            return res.status(403).json({ message: 'Your account is pending approval' });
+          }
+          if (pendingRows[0].status === 'rejected') {
+            recordFailedAttempt(rateLimitKey);
+            return res.status(403).json({ message: 'Your account has been deactivated. Contact the administrator.' });
+          }
+        }
+      } catch (err) {
+        // Silently continue if pending_registrations table check is unavailable
+      }
+
+      recordFailedAttempt(rateLimitKey);
       return res.status(401).json({ message: 'Invalid credentials' });
     }
 
+    // Check soft delete status
     if (user.deleted_at) {
+      recordFailedAttempt(rateLimitKey);
       return res.status(401).json({ message: 'Invalid credentials' });
     }
 
+    // Check active status
     if (!user.is_active) {
+      recordFailedAttempt(rateLimitKey);
+      if (user.role === 'customer') {
+        return res.status(403).json({ message: 'Your account is pending approval' });
+      }
       return res.status(403).json({ message: 'Your account has been deactivated. Contact the administrator.' });
     }
 
+    // Check if account has not set password yet
     if (!user.password_hash) {
-      return res.status(403).json({ message: 'Your account is approved but you haven\'t set a password. Please check your email for the activation link to set your password.' });
+      recordFailedAttempt(rateLimitKey);
+      return res.status(403).json({
+        message: 'Your account is approved but you haven\'t set a password. Please check your email for the activation link to set your password.'
+      });
     }
 
+    // 3. Verify password
     const isMatch = await UserModel.comparePassword(password, user.password_hash);
-
     if (!isMatch) {
+      recordFailedAttempt(rateLimitKey);
       return res.status(401).json({ message: 'Invalid credentials' });
     }
 
-    const token = generateToken(user);
+    // 4. Role enforcement against selected portal
+    // Database user.role is ground truth. Client-supplied body.role is ignored.
+    if (portal) {
+      const normalizedPortal = String(portal).trim().toLowerCase();
+      const userRole = String(user.role || '').trim().toLowerCase();
 
+      if (userRole !== normalizedPortal) {
+        recordFailedAttempt(rateLimitKey);
+        const portalLabels = {
+          admin: 'Admin',
+          cashier: 'Cashier',
+          customer: 'Customer'
+        };
+        const portalLabel = portalLabels[normalizedPortal] || (normalizedPortal.charAt(0).toUpperCase() + normalizedPortal.slice(1));
+        return res.status(403).json({
+          message: `This account is not authorized for the ${portalLabel} portal. Please use the correct tab.`
+        });
+      }
+    }
+
+    // 5. Success: Clear any failed attempts record
+    clearFailedAttempts(rateLimitKey);
+
+    const token = generateToken(user);
     const userProfile = await UserModel.getProfile(user.id);
     const fullUser = userProfile || user;
 
@@ -96,7 +206,7 @@ const register = async (req, res, next) => {
       return res.status(400).json({ message: 'An application with this email is already pending approval.' });
     }
 
-    const registrationId = await UserModel.createRegistration({
+    await UserModel.createRegistration({
       first_name,
       last_name,
       username: finalUsername,
