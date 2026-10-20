@@ -73,6 +73,10 @@ const ProductModel = {
   async toggleStatus(id, is_active) {
     await query('UPDATE products SET is_active = ? WHERE id = ?', [is_active ? 1 : 0, id]);
     return this.getById(id);
+  },
+
+  async delete(id) {
+    return await query('DELETE FROM products WHERE id = ?', [id]);
   }
 };
 

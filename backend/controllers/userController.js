@@ -33,6 +33,14 @@ const createUser = async (req, res, next) => {
             return res.status(400).json({ message: 'Full Name (first and last name), Email Address, and Role are required.' });
         }
 
+        const normalizedRole = role.toLowerCase() === 'user' ? 'customer' : role.toLowerCase();
+        if (normalizedRole === 'admin') {
+            return res.status(400).json({ message: 'Creating admin accounts is not permitted through this form. Only Cashier and Customer accounts can be created.' });
+        }
+        if (!['cashier', 'customer'].includes(normalizedRole)) {
+            return res.status(400).json({ message: 'Invalid role specified. Only Cashier and Customer accounts can be created.' });
+        }
+
         const finalUsername = (username || `${first_name.trim().toLowerCase()}.${last_name.trim().toLowerCase()}`).replace(/\s+/g, '');
 
         const existingEmail = await UserModel.findByEmail(email);
@@ -54,13 +62,13 @@ const createUser = async (req, res, next) => {
             username: finalUsername,
             email,
             password: tempPassword,
-            role,
+            role: normalizedRole,
             is_active: true,
             is_temp_password: isTemp ? 1 : 0,
             profile_picture: profile_picture || null
         });
 
-        if (role === 'customer') {
+        if (normalizedRole === 'customer') {
             const { query } = require('../config/db');
             await query(
                 'INSERT INTO customers (user_id, phone, contact_number, address, profile_image, username) VALUES (?, ?, ?, ?, ?, ?)',
@@ -152,6 +160,10 @@ const updateUser = async (req, res, next) => {
         if (normalizedRole) {
             if (normalizedRole.toLowerCase() === 'user') normalizedRole = 'customer';
             else normalizedRole = normalizedRole.toLowerCase();
+
+            if (normalizedRole === 'admin' && targetUser.role !== 'admin') {
+                return res.status(400).json({ message: 'Assigning Admin role is not permitted.' });
+            }
         }
 
         // Normalize status / is_active
