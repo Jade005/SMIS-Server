@@ -60,7 +60,32 @@ async function sendAccountCredentialsEmail({ email, fullName, username, tempPass
     <body>
       <div class="container">
         <div class="header">
-          <h1>🥩 Slaughterhouse MIS</h1>
+          <div style="margin-bottom: 8px;">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="48" height="48" style="display:inline-block;vertical-align:middle;">
+              <defs>
+                <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0" stop-color="#f43f5e"/>
+                  <stop offset="1" stop-color="#be123c"/>
+                </linearGradient>
+                <linearGradient id="shine" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0" stop-color="#ffffff" stop-opacity="0.28"/>
+                  <stop offset="0.5" stop-color="#ffffff" stop-opacity="0"/>
+                </linearGradient>
+              </defs>
+              <rect x="32" y="32" width="448" height="448" rx="112" fill="url(#bg)"/>
+              <rect x="32" y="32" width="448" height="448" rx="112" fill="url(#shine)"/>
+              <path d="M256 104 L384 150 V252 C384 328 330 382 256 410 C182 382 128 328 128 252 V150 Z"
+                    fill="#ffffff" fill-opacity="0.14" stroke="#ffffff" stroke-width="18" stroke-linejoin="round"/>
+              <g fill="none" stroke="#ffffff" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="256" cy="188" r="20" stroke-width="12"/>
+                <path d="M256 208 V312" stroke-width="14"/>
+                <path d="M224 244 H288" stroke-width="12"/>
+                <path d="M256 312 C256 352 208 352 208 312" stroke-width="14"/>
+                <path d="M208 312 L196 326" stroke-width="12"/>
+              </g>
+            </svg>
+          </div>
+          <h1>SMIS — Slaughterhouse MIS</h1>
           <p>Account Credentials & Access Notification</p>
         </div>
         <div class="content">
@@ -175,7 +200,32 @@ async function sendActivationEmail(email, fullName, activationToken) {
     <body>
       <div class="container">
         <div class="header">
-          <h1>dYc Slaughterhouse MIS</h1>
+          <div style="margin-bottom: 8px;">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="48" height="48" style="display:inline-block;vertical-align:middle;">
+              <defs>
+                <linearGradient id="bg2" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0" stop-color="#f43f5e"/>
+                  <stop offset="1" stop-color="#be123c"/>
+                </linearGradient>
+                <linearGradient id="shine2" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0" stop-color="#ffffff" stop-opacity="0.28"/>
+                  <stop offset="0.5" stop-color="#ffffff" stop-opacity="0"/>
+                </linearGradient>
+              </defs>
+              <rect x="32" y="32" width="448" height="448" rx="112" fill="url(#bg2)"/>
+              <rect x="32" y="32" width="448" height="448" rx="112" fill="url(#shine2)"/>
+              <path d="M256 104 L384 150 V252 C384 328 330 382 256 410 C182 382 128 328 128 252 V150 Z"
+                    fill="#ffffff" fill-opacity="0.14" stroke="#ffffff" stroke-width="18" stroke-linejoin="round"/>
+              <g fill="none" stroke="#ffffff" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="256" cy="188" r="20" stroke-width="12"/>
+                <path d="M256 208 V312" stroke-width="14"/>
+                <path d="M224 244 H288" stroke-width="12"/>
+                <path d="M256 312 C256 352 208 352 208 312" stroke-width="14"/>
+                <path d="M208 312 L196 326" stroke-width="12"/>
+              </g>
+            </svg>
+          </div>
+          <h1>SMIS — Slaughterhouse MIS</h1>
           <p>Account Activation Required</p>
         </div>
         <div class="content">
