@@ -23,9 +23,14 @@ const getSupplierById = async (req, res, next) => {
 const createSupplier = async (req, res, next) => {
   try {
     const { name, contact_person, phone, email, address } = req.body;
-    if (!name) return res.status(400).json({ message: 'Supplier name is required' });
+    if (!name || !name.trim()) return res.status(400).json({ message: 'Supplier name is required' });
 
-    const id = await SupplierModel.create({ name, contact_person, phone, email, address });
+    const existing = await SupplierModel.getByName(name);
+    if (existing) {
+      return res.status(400).json({ message: `A supplier named "${name.trim()}" already exists` });
+    }
+
+    const id = await SupplierModel.create({ name: name.trim(), contact_person, phone, email, address });
     const supplier = await SupplierModel.getById(id);
     res.status(201).json({ message: 'Supplier created successfully', supplier });
   } catch (error) {

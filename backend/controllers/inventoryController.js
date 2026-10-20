@@ -2,9 +2,26 @@ const InventoryModel = require('../models/inventoryModel');
 
 const getInventory = async (req, res, next) => {
   try {
-    const { status, product_id, supplier_id } = req.query;
-    const inventory = await InventoryModel.getAll({ status, product_id, supplier_id });
+    const { status, tab, product_id, supplier_id, search, include_disposed } = req.query;
+    const inventory = await InventoryModel.getAll({ status, tab, product_id, supplier_id, search, include_disposed });
     res.json(inventory);
+  } catch (error) {
+    next(error);
+  }
+};
+
+const getInventoryCounts = async (req, res, next) => {
+  try {
+    const raw = await InventoryModel.getCounts();
+    res.json({
+      all: raw.all_count || 0,
+      active: raw.active_count || 0,
+      low: raw.low_count || 0,
+      expired: raw.expired_count || 0,
+      disposed: raw.disposed_count || 0,
+      expired_weight_kg: Number(raw.expired_total_kg || 0),
+      ...raw
+    });
   } catch (error) {
     next(error);
   }
@@ -73,10 +90,44 @@ const updateBatchStatus = async (req, res, next) => {
   }
 };
 
+const disposeBatch = async (req, res, next) => {
+  try {
+    const userId = req.user ? req.user.id : null;
+    const userName = req.user ? `${req.user.first_name || ''} ${req.user.last_name || ''}`.trim() : 'Admin';
+    const reason = req.body.reason || 'Expired stock disposal';
+
+    const result = await InventoryModel.disposeBatch(req.params.id, { userId, userName, reason });
+    res.json(result);
+  } catch (error) {
+    next(error);
+  }
+};
+
+const disposeAllExpired = async (req, res, next) => {
+  try {
+    const userId = req.user ? req.user.id : null;
+    const userName = req.user ? `${req.user.first_name || ''} ${req.user.last_name || ''}`.trim() : 'Admin';
+    const reason = req.body.reason || 'Bulk expired stock disposal';
+
+    const result = await InventoryModel.disposeAllExpired({ userId, userName, reason });
+    res.json(result);
+  } catch (error) {
+    next(error);
+  }
+};
+
+const getDisposals = async (req, res, next) => {
+  try {
+    const disposals = await InventoryModel.getDisposals();
+    res.json(disposals);
+  } catch (error) {
+    next(error);
+  }
+};
+
 const getLowStockAlerts = async (req, res, next) => {
   try {
-    const threshold = req.query.threshold ? Number(req.query.threshold) : 10;
-    const alerts = await InventoryModel.getLowStockAlerts(threshold);
+    const alerts = await InventoryModel.getLowStockAlerts();
     res.json(alerts);
   } catch (error) {
     next(error);
@@ -104,10 +155,14 @@ const getExpiredAlerts = async (req, res, next) => {
 
 module.exports = {
   getInventory,
+  getInventoryCounts,
   getBatchById,
   addBatch,
   updateBatch,
   updateBatchStatus,
+  disposeBatch,
+  disposeAllExpired,
+  getDisposals,
   getLowStockAlerts,
   getExpiringAlerts,
   getExpiredAlerts

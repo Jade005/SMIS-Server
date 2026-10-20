@@ -446,13 +446,13 @@ async function seed() {
 
   // 2. Ensure supplier exists for inventory batches
   let supplierId = 1;
-  const suppliers = await query('SELECT id FROM suppliers LIMIT 1');
+  const suppliers = await query("SELECT id FROM suppliers WHERE LOWER(TRIM(name)) = LOWER('San Jose Slaughterhouse & Livestock') OR id = 1 LIMIT 1");
   if (suppliers.length > 0) {
     supplierId = suppliers[0].id;
   } else {
     const supRes = await query(
       'INSERT INTO suppliers (name, contact_person, email, phone, address) VALUES (?, ?, ?, ?, ?)',
-      ['San Jose Livestock Farm', 'Mang Jose', 'sanjose@farm.local', '09171234567', 'Batangas, Philippines']
+      ['San Jose Slaughterhouse & Livestock', 'Carlos Mendoza', 'sanjose@livestock.ph', '09179998888', 'Bulacan, Philippines']
     );
     supplierId = supRes.insertId;
     console.log(`✨ Created Default Supplier ID #${supplierId}`);

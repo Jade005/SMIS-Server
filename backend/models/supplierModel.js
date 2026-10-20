@@ -24,6 +24,12 @@ const SupplierModel = {
     return rows[0] || null;
   },
 
+  async getByName(name) {
+    if (!name) return null;
+    const rows = await query('SELECT * FROM suppliers WHERE LOWER(TRIM(name)) = LOWER(TRIM(?))', [name.trim()]);
+    return rows[0] || null;
+  },
+
   async create({ name, contact_person, phone, email, address }) {
     const result = await query(
       'INSERT INTO suppliers (name, contact_person, phone, email, address) VALUES (?, ?, ?, ?, ?)',

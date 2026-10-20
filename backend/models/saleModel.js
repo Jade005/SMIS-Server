@@ -72,7 +72,7 @@ const SaleModel = {
 
         // Fetch batch details and lock row for update
         const [batchRows] = await connection.query(
-          `SELECT i.*, p.name AS product_name, p.meat_cut
+          `SELECT i.*, p.name AS product_name, p.meat_cut, p.price_per_kg AS product_price_per_kg
            FROM inventory i
            INNER JOIN products p ON i.product_id = p.id
            WHERE i.id = ? FOR UPDATE`,
@@ -85,11 +85,24 @@ const SaleModel = {
 
         const batch = batchRows[0];
 
+        // Safety: never sell from an expired or disposed batch
+        const isBatchExpired = new Date(batch.expiration_date) < new Date(new Date().toDateString());
+        if (isBatchExpired || batch.status === 'expired') {
+          throw new Error(`Batch #${batch.batch_no} (${batch.product_name}) has reached expiration date and cannot be sold.`);
+        }
+        if (batch.status === 'disposed') {
+          throw new Error(`Batch #${batch.batch_no} (${batch.product_name}) has been disposed and cannot be sold.`);
+        }
+
         if (Number(batch.available_stock_kg) < Number(weight_kg)) {
           throw new Error(`Insufficient stock for ${batch.product_name} (${batch.meat_cut}). Available: ${batch.available_stock_kg} kg, Requested: ${weight_kg} kg`);
         }
 
-        const itemSubtotal = Number(weight_kg) * Number(batch.price_per_kg);
+        // Use product current price per kg unless batch price is explicitly different and set
+        const unitPrice = (batch.product_price_per_kg !== undefined && batch.product_price_per_kg !== null && Number(batch.product_price_per_kg) > 0)
+          ? Number(batch.product_price_per_kg)
+          : Number(batch.price_per_kg);
+        const itemSubtotal = Number(weight_kg) * unitPrice;
         subtotal += itemSubtotal;
 
         // Calculate new available stock

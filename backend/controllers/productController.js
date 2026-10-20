@@ -45,7 +45,7 @@ const getProductById = async (req, res, next) => {
 
 const createProduct = async (req, res, next) => {
   try {
-    const { category_id, name, meat_type, meat_cut, price_per_kg, description, image_url } = req.body;
+    const { category_id, name, meat_type, meat_cut, price_per_kg, low_stock_threshold, description, image_url } = req.body;
 
     if (!category_id || !name || !meat_type || !meat_cut || price_per_kg === undefined) {
       // If a file was uploaded in this invalid request, clean it up
@@ -68,6 +68,7 @@ const createProduct = async (req, res, next) => {
       meat_type,
       meat_cut,
       price_per_kg,
+      low_stock_threshold: low_stock_threshold !== undefined && Number(low_stock_threshold) > 0 ? Number(low_stock_threshold) : 15.000,
       description,
       image_url: finalImageUrl
     });
@@ -91,7 +92,7 @@ const updateProduct = async (req, res, next) => {
       return res.status(404).json({ message: 'Product not found' });
     }
 
-    const { category_id, name, meat_type, meat_cut, price_per_kg, description, image_url, remove_photo } = req.body;
+    const { category_id, name, meat_type, meat_cut, price_per_kg, low_stock_threshold, description, image_url, remove_photo } = req.body;
 
     let finalImageUrl = existing.image_url;
 
@@ -108,12 +109,17 @@ const updateProduct = async (req, res, next) => {
       finalImageUrl = image_url ? image_url.trim() : null;
     }
 
+    const parsedCatId = (category_id && String(category_id).trim() !== '' && String(category_id) !== 'null' && String(category_id) !== 'undefined')
+      ? parseInt(category_id, 10)
+      : (existing ? existing.category_id : null);
+
     const product = await ProductModel.update(req.params.id, {
-      category_id: category_id !== undefined ? category_id : existing.category_id,
+      category_id: parsedCatId,
       name: name !== undefined ? name : existing.name,
       meat_type: meat_type !== undefined ? meat_type : existing.meat_type,
       meat_cut: meat_cut !== undefined ? meat_cut : existing.meat_cut,
       price_per_kg: price_per_kg !== undefined ? price_per_kg : existing.price_per_kg,
+      low_stock_threshold: low_stock_threshold !== undefined ? Number(low_stock_threshold) : existing.low_stock_threshold,
       description: description !== undefined ? description : existing.description,
       image_url: finalImageUrl
     });
