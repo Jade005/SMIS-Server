@@ -79,11 +79,11 @@ const login = async (req, res, next) => {
         if (pendingRows && pendingRows.length > 0) {
           if (pendingRows[0].status === 'pending') {
             recordFailedAttempt(rateLimitKey);
-            return res.status(403).json({ message: 'Your account is pending approval' });
+            return res.status(403).json({ message: 'Your account is waiting for admin approval.' });
           }
           if (pendingRows[0].status === 'rejected') {
             recordFailedAttempt(rateLimitKey);
-            return res.status(403).json({ message: 'Your account has been deactivated. Contact the administrator.' });
+            return res.status(403).json({ message: 'Your account request was rejected. Please contact the administrator.' });
           }
         }
       } catch (err) {
@@ -100,11 +100,22 @@ const login = async (req, res, next) => {
       return res.status(401).json({ message: 'Invalid credentials' });
     }
 
+    // Check status: only 'active' can log in
+    if (user.status === 'pending') {
+      recordFailedAttempt(rateLimitKey);
+      return res.status(403).json({ message: 'Your account is waiting for admin approval.' });
+    }
+
+    if (user.status === 'rejected') {
+      recordFailedAttempt(rateLimitKey);
+      return res.status(403).json({ message: 'Your account request was rejected. Please contact the administrator.' });
+    }
+
     // Check active status
-    if (!user.is_active) {
+    if (!user.is_active || user.status !== 'active') {
       recordFailedAttempt(rateLimitKey);
       if (user.role === 'customer') {
-        return res.status(403).json({ message: 'Your account is pending approval' });
+        return res.status(403).json({ message: 'Your account is waiting for admin approval.' });
       }
       return res.status(403).json({ message: 'Your account has been deactivated. Contact the administrator.' });
     }
@@ -184,8 +195,12 @@ const register = async (req, res, next) => {
       return res.status(400).json({ message: 'First name, last name, and email address are required.' });
     }
 
-    const existingEmail = await UserModel.findByEmail(email);
+    const cleanEmail = email.trim().toLowerCase();
+    const existingEmail = await UserModel.findByEmail(cleanEmail);
     if (existingEmail) {
+      if (existingEmail.status === 'pending') {
+        return res.status(400).json({ message: 'Your account request was submitted. Please wait for admin approval.' });
+      }
       return res.status(400).json({ message: 'Email is already registered' });
     }
 
@@ -201,23 +216,49 @@ const register = async (req, res, next) => {
     }
 
     // Check if the email exists in pending_registrations too
-    const pendingQuery = await query('SELECT id FROM pending_registrations WHERE email = ? AND status = ?', [email, 'pending']);
+    const pendingQuery = await query('SELECT id FROM pending_registrations WHERE email = ? AND status = ?', [cleanEmail, 'pending']);
     if (pendingQuery.length > 0) {
-      return res.status(400).json({ message: 'An application with this email is already pending approval.' });
+      return res.status(400).json({ message: 'Your account request was submitted. Please wait for admin approval.' });
     }
 
-    await UserModel.createRegistration({
-      first_name,
-      last_name,
+    // Generate a default temporary password for the customer
+    const cleanFirst = first_name.trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+    const cleanLast = last_name.trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+    const tempPassword = `${cleanFirst}${cleanLast}123` || generateTemporaryPassword(10);
+
+    // Save user account with status "pending" (is_active: 0)
+    const userId = await UserModel.createUser({
+      first_name: first_name.trim(),
+      last_name: last_name.trim(),
       username: finalUsername,
-      email,
+      email: cleanEmail,
+      password: tempPassword,
+      role: 'customer',
+      status: 'pending',
+      is_active: 0,
+      is_temp_password: 1,
+      temp_password_plain: tempPassword
+    });
+
+    // Save into customers table with status "pending"
+    await query(
+      'INSERT INTO customers (user_id, phone, address, username, status) VALUES (?, ?, ?, ?, ?)',
+      [userId, phone || null, address || null, finalUsername, 'pending']
+    );
+
+    // Also record in pending_registrations for admin queue compatibility
+    await UserModel.createRegistration({
+      first_name: first_name.trim(),
+      last_name: last_name.trim(),
+      username: finalUsername,
+      email: cleanEmail,
       phone: phone || null,
       address: address || null
     });
 
     // Do NOT issue a token — account must be approved by admin first
     res.status(201).json({
-      message: 'Registration submitted! Your account is pending admin approval. You will be able to log in once an administrator approves your account.',
+      message: 'Your account request was submitted. Please wait for admin approval.',
       pending: true
     });
   } catch (error) {

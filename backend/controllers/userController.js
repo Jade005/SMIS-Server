@@ -328,60 +328,84 @@ const getPendingRegistrations = async (req, res, next) => {
 
 const approveRegistration = async (req, res, next) => {
     try {
+        const { query } = require('../config/db');
         const reg = await UserModel.getRegistrationById(req.params.id);
         if (!reg || reg.status !== 'pending') {
             return res.status(404).json({ message: 'Registration not found or not pending.' });
         }
 
-        // Check for existing user with this email — prevent duplicates
-        const existingEmail = await UserModel.findByEmail(reg.email);
-        if (existingEmail) {
-            return res.status(400).json({ message: 'An account with this email already exists.' });
-        }
-
-        // Generate a unique username from first/last name
+        let userId = null;
+        let tempPassword = generateTemporaryPassword(10);
         let finalUsername = reg.username;
-        if (!finalUsername) {
-            finalUsername = `${reg.first_name.trim().toLowerCase()}.${reg.last_name.trim().toLowerCase()}`.replace(/[^a-z0-9.]/g, '');
-        }
-        const existingUser = await UserModel.findByUsername(finalUsername);
+
+        // Check if user already exists in users table
+        const existingUser = await UserModel.findByEmail(reg.email);
+
         if (existingUser) {
-            finalUsername = `${finalUsername}${Math.floor(100 + Math.random() * 900)}`;
+            if (existingUser.status === 'active' && existingUser.is_active) {
+                return res.status(400).json({ message: 'An active account with this email already exists.' });
+            }
+            userId = existingUser.id;
+            finalUsername = existingUser.username || reg.username;
+
+            // Activate user and set status to active
+            await query(
+                'UPDATE users SET status = ?, is_active = 1 WHERE id = ?',
+                ['active', userId]
+            );
+
+            // Activate customer record
+            await query(
+                'UPDATE customers SET status = ? WHERE user_id = ?',
+                ['active', userId]
+            );
+
+            // If user has a plain temp password already saved, reuse it; otherwise set new temp password
+            if (existingUser.temp_password_plain) {
+                tempPassword = existingUser.temp_password_plain;
+            } else if (!existingUser.password_hash) {
+                await UserModel.resetPasswordWithTemp(userId, tempPassword);
+            }
+        } else {
+            // User not yet in users table, create active account
+            if (!finalUsername) {
+                finalUsername = `${reg.first_name.trim().toLowerCase()}.${reg.last_name.trim().toLowerCase()}`.replace(/[^a-z0-9.]/g, '');
+            }
+            const existingUsername = await UserModel.findByUsername(finalUsername);
+            if (existingUsername) {
+                finalUsername = `${finalUsername}${Math.floor(100 + Math.random() * 900)}`;
+            }
+
+            userId = await UserModel.createUser({
+                first_name: reg.first_name,
+                last_name: reg.last_name,
+                username: finalUsername,
+                email: reg.email,
+                password: tempPassword,
+                role: 'customer',
+                status: 'active',
+                is_active: 1,
+                is_temp_password: 1,
+                temp_password_plain: tempPassword
+            });
+
+            await query(
+                'INSERT INTO customers (user_id, phone, address, username, status) VALUES (?, ?, ?, ?, ?)',
+                [userId, reg.phone || null, reg.address || null, finalUsername, 'active']
+            );
         }
 
-        // Auto-generate a secure temporary password for the customer
-        const tempPassword = generateTemporaryPassword(10);
-
-        // Create the active customer account with the generated password
-        const userId = await UserModel.createUser({
-            first_name: reg.first_name,
-            last_name: reg.last_name,
-            username: finalUsername,
-            email: reg.email,
-            password: tempPassword,
-            role: 'customer',
-            is_active: 1,
-            is_temp_password: 1,
-            temp_password_plain: tempPassword
-        });
-
-        const { query } = require('../config/db');
-        await query(
-            'INSERT INTO customers (user_id, phone, address, username) VALUES (?, ?, ?, ?)',
-            [userId, reg.phone || null, reg.address || null, finalUsername]
-        );
-
-        // Mark registration as approved
-        await UserModel.updateRegistrationStatus(reg.id, 'approved');
+        // Mark pending registration as approved
+        await query('UPDATE pending_registrations SET status = ? WHERE id = ? OR email = ?', ['approved', reg.id, reg.email]);
 
         const user = await UserModel.findById(userId);
-        const fullName = `${user.first_name} ${user.last_name}`;
+        const fullName = `${user.first_name || reg.first_name} ${user.last_name || reg.last_name}`;
 
-        // Log the approval action
+        // Audit log
         const adminActor = req.user ? `Admin ID ${req.user.id} (${req.user.username || req.user.email})` : 'Admin';
-        console.log(`[AUDIT] [${new Date().toISOString()}] ${adminActor} approved registration for ${fullName} (email: ${reg.email}, username: ${finalUsername}).`);
+        console.log(`[AUDIT] [${new Date().toISOString()}] ${adminActor} approved (registered) account for ${fullName} (email: ${reg.email}, username: ${finalUsername}, status: active).`);
 
-        // Send credentials email (graceful — non-fatal if SMTP not configured)
+        // Send credentials email (graceful)
         const emailResult = await sendAccountCredentialsEmail({
             email: user.email,
             fullName,
@@ -391,7 +415,7 @@ const approveRegistration = async (req, res, next) => {
         });
 
         res.json({
-            message: `Registration for ${fullName} approved! Account is now active. Share the generated password with the customer.`,
+            message: `Account for ${fullName} has been registered and approved! Status is now active.`,
             user,
             temp_password: tempPassword,
             email_sent: emailResult.success,
@@ -404,14 +428,25 @@ const approveRegistration = async (req, res, next) => {
 
 const rejectRegistration = async (req, res, next) => {
     try {
+        const { query } = require('../config/db');
         const reg = await UserModel.getRegistrationById(req.params.id);
         if (!reg || reg.status !== 'pending') {
             return res.status(404).json({ message: 'Registration not found or not pending.' });
         }
 
-        await UserModel.updateRegistrationStatus(reg.id, 'rejected');
+        // Update pending_registrations table
+        await query('UPDATE pending_registrations SET status = ? WHERE id = ? OR email = ?', ['rejected', reg.id, reg.email]);
 
-        res.json({ message: `Registration for ${reg.first_name} ${reg.last_name} rejected.` });
+        // Update users table status to 'rejected' and deactivate
+        await query('UPDATE users SET status = ?, is_active = 0 WHERE id = ? OR email = ?', ['rejected', reg.id, reg.email]);
+
+        // Update customers table status to 'rejected'
+        await query('UPDATE customers SET status = ? WHERE user_id = ? OR user_id IN (SELECT id FROM users WHERE email = ?)', ['rejected', reg.id, reg.email]);
+
+        const adminActor = req.user ? `Admin ID ${req.user.id} (${req.user.username || req.user.email})` : 'Admin';
+        console.log(`[AUDIT] [${new Date().toISOString()}] ${adminActor} rejected account request for ${reg.first_name} ${reg.last_name} (${reg.email}).`);
+
+        res.json({ message: `Account request for ${reg.first_name} ${reg.last_name} was rejected.` });
     } catch (error) {
         next(error);
     }
