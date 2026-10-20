@@ -16,6 +16,15 @@ const getOrderById = async (req, res, next) => {
   try {
     const order = await OrderModel.getById(req.params.id);
     if (!order) return res.status(404).json({ message: 'Order not found' });
+
+    // Security check: if customer, ensure the order belongs to them
+    if (req.user && req.user.role === 'customer') {
+      const customer = await CustomerModel.getByUserId(req.user.id);
+      if (!customer || !customer.customer_id || Number(order.customer_id) !== Number(customer.customer_id)) {
+        return res.status(403).json({ message: 'You are not authorized to view this order' });
+      }
+    }
+
     res.json(order);
   } catch (error) {
     next(error);
@@ -102,7 +111,7 @@ const cancelOrder = async (req, res, next) => {
     }
 
     if (order.status !== 'pending') {
-      return res.status(400).json({ message: 'Only pending orders can be cancelled' });
+      return res.status(409).json({ message: 'This order has already been confirmed and can no longer be cancelled' });
     }
 
     const updated = await OrderModel.updateStatus(req.params.id, 'cancelled');

@@ -14,6 +14,7 @@ const { authorize } = require('../middleware/rbac');
 router.get('/my', protect, authorize('customer'), getMyOrders);
 router.post('/', protect, authorize('customer'), createOrder);
 router.delete('/:id', protect, authorize('customer'), cancelOrder);
+router.patch('/:id/cancel', protect, authorize('customer'), cancelOrder);
 
 router.get('/', protect, authorize('admin', 'cashier'), getOrders);
 router.get('/:id', protect, getOrderById);
