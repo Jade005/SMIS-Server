@@ -66,7 +66,12 @@ const OrderModel = {
         const { product_id, weight_kg } = item;
 
         const [products] = await connection.query(
-          `SELECT name, meat_cut, price_per_kg FROM products WHERE id = ?`,
+          `SELECT p.name, p.meat_cut, p.price_per_kg,
+                  COALESCE(SUM(CASE WHEN i.expiration_date >= CURDATE() AND i.status NOT IN ('expired', 'disposed', 'depleted') THEN i.available_stock_kg ELSE 0 END), 0) AS available_stock_kg
+           FROM products p
+           LEFT JOIN inventory i ON p.id = i.product_id
+           WHERE p.id = ?
+           GROUP BY p.id`,
           [product_id]
         );
 
@@ -75,7 +80,17 @@ const OrderModel = {
         }
 
         const prod = products[0];
-        const itemSubtotal = Number(weight_kg) * Number(prod.price_per_kg);
+        const availStock = Number(prod.available_stock_kg);
+        const reqWeight = Number(weight_kg);
+
+        if (availStock <= 0) {
+          throw new Error(`"${prod.name}" is currently out of stock.`);
+        }
+        if (reqWeight > availStock) {
+          throw new Error(`Requested weight for "${prod.name}" (${reqWeight} kg) exceeds available stock (${availStock.toFixed(1)} kg).`);
+        }
+
+        const itemSubtotal = reqWeight * Number(prod.price_per_kg);
         subtotal += itemSubtotal;
 
         orderItemsToInsert.push({
