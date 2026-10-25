@@ -19,25 +19,39 @@ const ReportModel = {
     const range = resolveDateRange({ granularity, from, to });
     const fmt = getDateFormatString(range.granularity);
 
-    // 1. Chart time-series
-    const chartSql = `
+    // 1. Chart time-series: calculate revenue & count from sales, volume from sales_items
+    const salesChartSql = `
       SELECT DATE_FORMAT(s.created_at, ${fmt}) AS bucket_key,
              COALESCE(SUM(s.total_amount), 0) AS revenue,
-             COUNT(DISTINCT s.id) AS transactions_count,
-             COALESCE(SUM(si.weight_kg), 0) AS volume_kg
+             COUNT(s.id) AS transactions_count
       FROM sales s
-      LEFT JOIN sales_items si ON s.id = si.sale_id
       WHERE DATE(s.created_at) BETWEEN ? AND ?
       GROUP BY bucket_key
     `;
-    const chartRows = await query(chartSql, [range.from, range.to]);
+    const salesChartRows = await query(salesChartSql, [range.from, range.to]);
+
+    const volumeChartSql = `
+      SELECT DATE_FORMAT(si.created_at, ${fmt}) AS bucket_key,
+             COALESCE(SUM(si.weight_kg), 0) AS volume_kg
+      FROM sales_items si
+      WHERE DATE(si.created_at) BETWEEN ? AND ?
+      GROUP BY bucket_key
+    `;
+    const volumeChartRows = await query(volumeChartSql, [range.from, range.to]);
+
     const chartMap = {};
-    for (const row of chartRows) {
+    for (const row of salesChartRows) {
       chartMap[row.bucket_key] = {
         revenue: Number(row.revenue) || 0,
-        volume_kg: Number(row.volume_kg) || 0,
+        volume_kg: 0,
         transactions_count: Number(row.transactions_count) || 0
       };
+    }
+    for (const row of volumeChartRows) {
+      if (!chartMap[row.bucket_key]) {
+        chartMap[row.bucket_key] = { revenue: 0, volume_kg: 0, transactions_count: 0 };
+      }
+      chartMap[row.bucket_key].volume_kg = Number(row.volume_kg) || 0;
     }
 
     // Continuous bucket filling with 0
@@ -53,29 +67,42 @@ const ReportModel = {
       };
     });
 
-    // 2. Summary KPIs
-    const summarySql = `
-      SELECT COUNT(DISTINCT s.id) AS total_transactions,
+    // 2. Summary KPIs: query sales directly for transactions and revenue, and sales_items for volume
+    const summarySalesSql = `
+      SELECT COUNT(s.id) AS total_transactions,
              COALESCE(SUM(s.total_amount), 0) AS total_revenue,
-             COALESCE(AVG(s.total_amount), 0) AS average_transaction_value,
-             COALESCE(SUM(si.weight_kg), 0) AS total_volume_kg
+             COALESCE(AVG(s.total_amount), 0) AS average_transaction_value
       FROM sales s
-      LEFT JOIN sales_items si ON s.id = si.sale_id
       WHERE DATE(s.created_at) BETWEEN ? AND ?
     `;
-    const summaryRows = await query(summarySql, [range.from, range.to]);
+    const summarySalesRows = await query(summarySalesSql, [range.from, range.to]);
 
-    // 3. Top Selling Meat Cuts
+    const summaryVolumeSql = `
+      SELECT COALESCE(SUM(si.weight_kg), 0) AS total_volume_kg
+      FROM sales_items si
+      WHERE DATE(si.created_at) BETWEEN ? AND ?
+    `;
+    const summaryVolumeRows = await query(summaryVolumeSql, [range.from, range.to]);
+
+    const summary = {
+      total_transactions: summarySalesRows[0]?.total_transactions || 0,
+      total_revenue: summarySalesRows[0]?.total_revenue || 0,
+      average_transaction_value: summarySalesRows[0]?.average_transaction_value || 0,
+      total_volume_kg: summaryVolumeRows[0]?.total_volume_kg || 0
+    };
+
+    // 3. Top Selling Meat Cuts: aggregate directly from sales_items
     const topCutsSql = `
       SELECT si.product_name, si.meat_cut,
              COALESCE(SUM(si.weight_kg), 0) AS volume_sold,
-             COALESCE(SUM(si.subtotal), 0) AS revenue
+             COALESCE(SUM(si.subtotal), 0) AS revenue,
+             COALESCE(SUM(si.weight_kg), 0) AS total_kg_sold,
+             COALESCE(SUM(si.subtotal), 0) AS total_revenue_generated
       FROM sales_items si
-      INNER JOIN sales s ON si.sale_id = s.id
-      WHERE DATE(s.created_at) BETWEEN ? AND ?
+      WHERE DATE(si.created_at) BETWEEN ? AND ?
       GROUP BY si.product_name, si.meat_cut
-      ORDER BY volume_sold DESC
-      LIMIT 10
+      ORDER BY revenue DESC
+      LIMIT 6
     `;
     const topSellingCuts = await query(topCutsSql, [range.from, range.to]);
 
@@ -94,12 +121,7 @@ const ReportModel = {
       granularity: range.granularity,
       from: range.from,
       to: range.to,
-      summary: summaryRows[0] || {
-        total_transactions: 0,
-        total_revenue: 0,
-        average_transaction_value: 0,
-        total_volume_kg: 0
-      },
+      summary,
       chartData,
       topSellingCuts,
       transactions

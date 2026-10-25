@@ -18,7 +18,9 @@ const AnalyticsModel = {
     const sql = `
       SELECT si.product_name, si.meat_cut,
              COALESCE(SUM(si.weight_kg), 0) AS total_kg_sold,
-             COALESCE(SUM(si.subtotal), 0) AS total_revenue_generated
+             COALESCE(SUM(si.subtotal), 0) AS total_revenue_generated,
+             COALESCE(SUM(si.weight_kg), 0) AS volume_sold,
+             COALESCE(SUM(si.subtotal), 0) AS revenue
       FROM sales_items si
       GROUP BY si.product_name, si.meat_cut
       ORDER BY total_kg_sold DESC

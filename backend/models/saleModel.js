@@ -70,9 +70,10 @@ const SaleModel = {
       for (const item of items) {
         const { inventory_id, weight_kg } = item;
 
-        // Fetch batch details and lock row for update
+        // Fetch batch details and product information, locking row for update
         const [batchRows] = await connection.query(
-          `SELECT i.*, p.name AS product_name, p.meat_cut, p.price_per_kg AS product_price_per_kg
+          `SELECT i.id AS inventory_id, i.available_stock_kg, i.expiration_date, i.status, i.batch_no,
+                  p.id AS product_id, p.name AS product_name, p.meat_cut AS meat_cut, p.price_per_kg AS product_price_per_kg
            FROM inventory i
            INNER JOIN products p ON i.product_id = p.id
            WHERE i.id = ? FOR UPDATE`,
@@ -101,7 +102,7 @@ const SaleModel = {
         // Use product current price per kg unless batch price is explicitly different and set
         const unitPrice = (batch.product_price_per_kg !== undefined && batch.product_price_per_kg !== null && Number(batch.product_price_per_kg) > 0)
           ? Number(batch.product_price_per_kg)
-          : Number(batch.price_per_kg);
+          : Number(batch.price_per_kg || 0);
         const itemSubtotal = Number(weight_kg) * unitPrice;
         subtotal += itemSubtotal;
 
@@ -129,7 +130,7 @@ const SaleModel = {
           product_name: batch.product_name,
           meat_cut: batch.meat_cut,
           weight_kg: Number(weight_kg),
-          price_per_kg: Number(batch.price_per_kg),
+          price_per_kg: unitPrice,
           subtotal: itemSubtotal
         });
       }
