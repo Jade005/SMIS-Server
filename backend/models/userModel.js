@@ -37,14 +37,14 @@ const UserModel = {
 
   async findById(id) {
     const users = await query(
-      'SELECT id, first_name, last_name, username, email, role, status, is_active, is_temp_password, temp_password_plain, profile_picture, created_at, updated_at FROM users WHERE id = ?',
+      'SELECT id, first_name, last_name, username, email, role, status, is_active, is_temp_password, temp_password_plain, profile_picture, registered_by, created_by_admin_id, created_at, updated_at FROM users WHERE id = ?',
       [id ?? null]
     );
     return users[0] || null;
   },
 
   async getAllUsers(filters = {}) {
-    let sql = 'SELECT id, first_name, last_name, username, email, role, status, is_active, is_temp_password, temp_password_plain, profile_picture, created_at, updated_at FROM users WHERE deleted_at IS NULL';
+    let sql = 'SELECT id, first_name, last_name, username, email, role, status, is_active, is_temp_password, temp_password_plain, profile_picture, registered_by, created_by_admin_id, created_at, updated_at FROM users WHERE deleted_at IS NULL';
     const params = [];
 
     if (filters.role) {
@@ -66,7 +66,21 @@ const UserModel = {
     return await query(sql, params);
   },
 
-  async createUser({ first_name, last_name, username, email, password, role = 'customer', status, is_active, is_temp_password = 0, temp_password_plain = null, profile_picture = null }) {
+  async createUser({
+    first_name,
+    last_name,
+    username,
+    email,
+    password,
+    role = 'customer',
+    status,
+    is_active,
+    is_temp_password = 0,
+    temp_password_plain = null,
+    profile_picture = null,
+    registered_by = null,
+    created_by_admin_id = null
+  }) {
     let password_hash = null;
     if (password) {
       const salt = await bcrypt.genSalt(12);
@@ -79,9 +93,10 @@ const UserModel = {
       : (accountStatus === 'active' ? 1 : 0);
     const tempPassFlag = is_temp_password ? 1 : 0;
     const plainTemp = tempPassFlag && password ? (temp_password_plain || password) : null;
+    const adminCreator = created_by_admin_id || registered_by || null;
 
     const result = await query(
-      'INSERT INTO users (first_name, last_name, username, email, password_hash, role, status, is_active, is_temp_password, temp_password_plain, profile_picture) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      'INSERT INTO users (first_name, last_name, username, email, password_hash, role, status, is_active, is_temp_password, temp_password_plain, profile_picture, registered_by, created_by_admin_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       [
         first_name ?? null,
         last_name ?? null,
@@ -93,7 +108,9 @@ const UserModel = {
         active,
         tempPassFlag,
         plainTemp,
-        profile_picture ?? null
+        profile_picture ?? null,
+        adminCreator,
+        adminCreator
       ]
     );
 

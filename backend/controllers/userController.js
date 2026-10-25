@@ -27,6 +27,11 @@ const getUserById = async (req, res, next) => {
 
 const createUser = async (req, res, next) => {
     try {
+        // Enforce Admin role requirement (403 otherwise)
+        if (!req.user || req.user.role !== 'admin') {
+            return res.status(403).json({ message: 'Forbidden. Admin role required to register accounts.' });
+        }
+
         const { first_name, last_name, username, email, role, password, phone, address, profile_picture } = req.body;
 
         if (!first_name || !last_name || !email || !role) {
@@ -41,9 +46,16 @@ const createUser = async (req, res, next) => {
             return res.status(400).json({ message: 'Invalid role specified. Only Cashier and Customer accounts can be created.' });
         }
 
+        const cleanEmail = email.trim().toLowerCase();
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        if (!emailRegex.test(cleanEmail)) {
+            return res.status(400).json({ message: 'Please provide a valid email address' });
+        }
+
         const finalUsername = (username || `${first_name.trim().toLowerCase()}.${last_name.trim().toLowerCase()}`).replace(/\s+/g, '');
 
-        const existingEmail = await UserModel.findByEmail(email);
+        // Reject duplicate emails
+        const existingEmail = await UserModel.findByEmail(cleanEmail);
         if (existingEmail) {
             return res.status(400).json({ message: 'Email address is already registered' });
         }
@@ -56,23 +68,29 @@ const createUser = async (req, res, next) => {
         const tempPassword = password || generateTemporaryPassword(10);
         const isTemp = true;
 
+        // Admin-created accounts are immediately 'active' (verified) and tracked by admin ID
+        const adminId = req.user.id;
         const id = await UserModel.createUser({
-            first_name,
-            last_name,
+            first_name: first_name.trim(),
+            last_name: last_name.trim(),
             username: finalUsername,
-            email,
+            email: cleanEmail,
             password: tempPassword,
             role: normalizedRole,
+            status: 'active',
             is_active: true,
             is_temp_password: isTemp ? 1 : 0,
-            profile_picture: profile_picture || null
+            temp_password_plain: tempPassword,
+            profile_picture: profile_picture || null,
+            registered_by: adminId,
+            created_by_admin_id: adminId
         });
 
         if (normalizedRole === 'customer') {
             const { query } = require('../config/db');
             await query(
-                'INSERT INTO customers (user_id, phone, contact_number, address, profile_image, username) VALUES (?, ?, ?, ?, ?, ?)',
-                [id, phone || null, phone || null, address || null, profile_picture || null, finalUsername]
+                'INSERT INTO customers (user_id, phone, contact_number, address, profile_image, username, status, registered_by, created_by_admin_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                [id, phone || null, phone || null, address || null, profile_picture || null, finalUsername, 'active', adminId, adminId]
             );
         }
 
