@@ -23,6 +23,31 @@ const getOrderById = async (req, res, next) => {
       if (!customer || !customer.customer_id || Number(order.customer_id) !== Number(customer.customer_id)) {
         return res.status(403).json({ message: 'You are not authorized to view this order' });
       }
+
+      // Explicitly sanitize response for customer view: ensure no cashier/internal data is exposed
+      const sanitizedItems = (order.items || []).map((it) => ({
+        id: it.id,
+        product_id: it.product_id,
+        product_name: it.product_name,
+        meat_cut: it.meat_cut,
+        weight_kg: it.weight_kg,
+        price_per_kg: it.price_per_kg,
+        subtotal: it.subtotal
+      }));
+
+      return res.json({
+        id: order.id,
+        order_no: order.order_no,
+        status: order.status,
+        subtotal: order.subtotal,
+        total_amount: order.total_amount,
+        notes: order.notes,
+        created_at: order.created_at,
+        updated_at: order.updated_at,
+        customer_name: order.customer_name,
+        customer_phone: order.customer_phone,
+        items: sanitizedItems
+      });
     }
 
     res.json(order);
@@ -106,7 +131,7 @@ const cancelOrder = async (req, res, next) => {
 
     // Verify ownership: the order must belong to the logged-in customer
     const customer = await CustomerModel.getByUserId(req.user.id);
-    if (!customer || !customer.customer_id || order.customer_id !== customer.customer_id) {
+    if (!customer || !customer.customer_id || Number(order.customer_id) !== Number(customer.customer_id)) {
       return res.status(403).json({ message: 'You are not authorized to cancel this order' });
     }
 
