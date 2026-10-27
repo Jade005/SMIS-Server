@@ -33,6 +33,30 @@ const getProducts = async (req, res, next) => {
   }
 };
 
+const getShowcaseProducts = async (req, res, next) => {
+  try {
+    const { category_id, meat_type } = req.query;
+    const products = await ProductModel.getAll({ category_id, meat_type, is_active: 1 });
+    // Sanitize exact stock numbers for public display; only return stock_status and boolean in_stock
+    const showcase = products.map((p) => ({
+      id: p.id,
+      name: p.name,
+      meat_type: p.meat_type,
+      meat_cut: p.meat_cut,
+      price_per_kg: p.price_per_kg,
+      image_url: p.image_url,
+      category_id: p.category_id,
+      category_name: p.category_name,
+      description: p.description,
+      in_stock: (Number(p.total_available_stock_kg) || 0) > 0,
+      stock_status: p.stock_status || ((Number(p.total_available_stock_kg) || 0) > 0 ? 'in_stock' : 'out_of_stock')
+    }));
+    res.json(showcase);
+  } catch (error) {
+    next(error);
+  }
+};
+
 const getProductById = async (req, res, next) => {
   try {
     const product = await ProductModel.getById(req.params.id);
@@ -160,6 +184,7 @@ const toggleProductStatus = async (req, res, next) => {
 
 module.exports = {
   getProducts,
+  getShowcaseProducts,
   getProductById,
   createProduct,
   updateProduct,

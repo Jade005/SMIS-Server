@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const {
   getProducts,
+  getShowcaseProducts,
   getProductById,
   createProduct,
   updateProduct,
@@ -11,6 +12,10 @@ const {
 const { protect } = require('../middleware/auth');
 const { authorize } = require('../middleware/rbac');
 const { handleProductPhotoUpload } = require('../middleware/upload');
+
+// Public showcase / catalog preview endpoints (no auth required)
+router.get('/showcase', getShowcaseProducts);
+router.get('/public', getShowcaseProducts);
 
 router.get('/', protect, getProducts);
 router.get('/:id', protect, getProductById);
