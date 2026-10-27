@@ -2,6 +2,7 @@ const UserModel = require('../models/userModel');
 const { generateTemporaryPassword } = require('../utils/passwordHelper');
 const { sendAccountCredentialsEmail } = require('../utils/emailService');
 const { saveAvatarImage } = require('../utils/avatarStorage');
+const { getMiddleInitial, sanitizeMiddleName, getDisplayName, generateUniqueSystemEmail } = require('../utils/nameHelper');
 
 const getUsers = async (req, res, next) => {
     try {
@@ -32,11 +33,16 @@ const createUser = async (req, res, next) => {
             return res.status(403).json({ message: 'Forbidden. Admin role required to register accounts.' });
         }
 
-        const { first_name, last_name, username, email, role, password, phone, address, profile_picture } = req.body;
+        const { first_name, middle_name, middle_initial, last_name, username, email, role, password, phone, address, profile_picture } = req.body;
 
         if (!first_name || !last_name || !email || !role) {
             return res.status(400).json({ message: 'Full Name (first and last name), Email Address, and Role are required.' });
         }
+
+        const cleanMiddleName = middle_name ? sanitizeMiddleName(middle_name) : null;
+        const cleanMiddleInitial = cleanMiddleName
+            ? (middle_initial ? String(middle_initial).trim() : getMiddleInitial(cleanMiddleName))
+            : null;
 
         const normalizedRole = role.toLowerCase() === 'user' ? 'customer' : role.toLowerCase();
         if (normalizedRole === 'admin') {
@@ -46,23 +52,33 @@ const createUser = async (req, res, next) => {
             return res.status(400).json({ message: 'Invalid role specified. Only Cashier and Customer accounts can be created.' });
         }
 
-        const cleanEmail = email.trim().toLowerCase();
+        let cleanEmail = email.trim().toLowerCase();
         const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
         if (!emailRegex.test(cleanEmail)) {
             return res.status(400).json({ message: 'Please provide a valid email address' });
         }
 
-        const finalUsername = (username || `${first_name.trim().toLowerCase()}.${last_name.trim().toLowerCase()}`).replace(/\s+/g, '');
+        const { query } = require('../config/db');
 
-        // Reject duplicate emails
+        // If duplicate email exists
         const existingEmail = await UserModel.findByEmail(cleanEmail);
         if (existingEmail) {
-            return res.status(400).json({ message: 'Email address is already registered' });
+            if (cleanEmail.endsWith('@smis.local')) {
+                cleanEmail = await generateUniqueSystemEmail(first_name, last_name, query);
+            } else {
+                return res.status(400).json({ message: 'Email address is already registered' });
+            }
         }
+
+        let finalUsername = (username || `${first_name.trim().toLowerCase()}.${last_name.trim().toLowerCase()}`).replace(/\s+/g, '');
 
         const existingUsername = await UserModel.findByUsername(finalUsername);
         if (existingUsername) {
-            return res.status(400).json({ message: `Username "${finalUsername}" is already taken` });
+            if (username) {
+                return res.status(400).json({ message: `Username "${finalUsername}" is already taken` });
+            } else {
+                finalUsername = `${finalUsername}${Math.floor(100 + Math.random() * 900)}`;
+            }
         }
 
         const tempPassword = password || generateTemporaryPassword(10);
@@ -72,6 +88,8 @@ const createUser = async (req, res, next) => {
         const adminId = req.user.id;
         const id = await UserModel.createUser({
             first_name: first_name.trim(),
+            middle_name: cleanMiddleName,
+            middle_initial: cleanMiddleInitial,
             last_name: last_name.trim(),
             username: finalUsername,
             email: cleanEmail,
@@ -87,21 +105,25 @@ const createUser = async (req, res, next) => {
         });
 
         if (normalizedRole === 'customer') {
-            const { query } = require('../config/db');
             await query(
-                'INSERT INTO customers (user_id, phone, contact_number, address, profile_image, username, status, registered_by, created_by_admin_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-                [id, phone || null, phone || null, address || null, profile_picture || null, finalUsername, 'active', adminId, adminId]
+                'INSERT INTO customers (user_id, middle_name, middle_initial, phone, contact_number, address, profile_image, username, status, registered_by, created_by_admin_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                [id, cleanMiddleName, cleanMiddleInitial, phone || null, phone || null, address || null, profile_picture || null, finalUsername, 'active', adminId, adminId]
             );
         }
 
-        const fullName = `${first_name} ${last_name}`;
+        const fullName = getDisplayName({
+            first_name: first_name.trim(),
+            middle_name: cleanMiddleName,
+            middle_initial: cleanMiddleInitial,
+            last_name: last_name.trim()
+        });
 
         // Audit log recording Admin registration action
         const adminActor = req.user ? `Admin ID ${req.user.id} (${req.user.username || req.user.email})` : 'Admin';
-        console.log(`[AUDIT] [${new Date().toISOString()}] ${adminActor} registered new ${role} account: User ID ${id} (${fullName}, email: ${email}, username: ${finalUsername}, status: ACTIVE/AUTO-APPROVED).`);
+        console.log(`[AUDIT] [${new Date().toISOString()}] ${adminActor} registered new ${role} account: User ID ${id} (${fullName}, email: ${cleanEmail}, username: ${finalUsername}, status: ACTIVE/AUTO-APPROVED).`);
 
         const emailResult = await sendAccountCredentialsEmail({
-            email,
+            email: cleanEmail,
             fullName,
             username: finalUsername,
             tempPassword,
@@ -125,7 +147,7 @@ const createUser = async (req, res, next) => {
 const updateUser = async (req, res, next) => {
     try {
         const { id } = req.params;
-        const { first_name, last_name, full_name, username, email, role, status, is_active, password, profile_picture } = req.body;
+        const { first_name, middle_name, middle_initial, last_name, full_name, username, email, role, status, is_active, password, profile_picture } = req.body;
 
         const targetUser = await UserModel.findById(id);
         if (!targetUser) {
@@ -145,6 +167,17 @@ const updateUser = async (req, res, next) => {
         }
         if (lName !== undefined && !lName.trim()) {
             return res.status(400).json({ message: 'Last name cannot be empty' });
+        }
+
+        let cleanMiddleName = undefined;
+        let cleanMiddleInitial = undefined;
+        if (middle_name !== undefined) {
+            cleanMiddleName = middle_name ? sanitizeMiddleName(middle_name) : null;
+            cleanMiddleInitial = cleanMiddleName
+                ? (middle_initial !== undefined && middle_initial ? String(middle_initial).trim() : getMiddleInitial(cleanMiddleName))
+                : null;
+        } else if (middle_initial !== undefined) {
+            cleanMiddleInitial = middle_initial ? String(middle_initial).trim() : null;
         }
 
         if (email !== undefined) {
@@ -199,6 +232,8 @@ const updateUser = async (req, res, next) => {
 
         const user = await UserModel.updateUser(id, {
             first_name: fName !== undefined ? fName.trim() : undefined,
+            middle_name: cleanMiddleName,
+            middle_initial: cleanMiddleInitial,
             last_name: lName !== undefined ? lName.trim() : undefined,
             username: username !== undefined ? username.trim() : undefined,
             email: email !== undefined ? email.trim() : undefined,
@@ -406,8 +441,11 @@ const approveRegistration = async (req, res, next) => {
                 finalUsername = `${finalUsername}${Math.floor(100 + Math.random() * 900)}`;
             }
 
+            const regMi = reg.middle_initial || (reg.middle_name ? getMiddleInitial(reg.middle_name) : null);
             userId = await UserModel.createUser({
                 first_name: reg.first_name,
+                middle_name: reg.middle_name || null,
+                middle_initial: regMi,
                 last_name: reg.last_name,
                 username: finalUsername,
                 email: reg.email,
@@ -420,8 +458,8 @@ const approveRegistration = async (req, res, next) => {
             });
 
             await query(
-                'INSERT INTO customers (user_id, phone, address, username, status) VALUES (?, ?, ?, ?, ?)',
-                [userId, reg.phone || null, reg.address || null, finalUsername, 'active']
+                'INSERT INTO customers (user_id, middle_name, middle_initial, phone, address, username, status) VALUES (?, ?, ?, ?, ?, ?, ?)',
+                [userId, reg.middle_name || null, regMi, reg.phone || null, reg.address || null, finalUsername, 'active']
             );
         }
 
@@ -429,7 +467,7 @@ const approveRegistration = async (req, res, next) => {
         await query('UPDATE pending_registrations SET status = ? WHERE id = ? OR email = ?', ['approved', reg.id, reg.email]);
 
         const user = await UserModel.findById(userId);
-        const fullName = `${user.first_name || reg.first_name} ${user.last_name || reg.last_name}`;
+        const fullName = getDisplayName(user || reg);
 
         // Audit log
         const adminActor = req.user ? `Admin ID ${req.user.id} (${req.user.username || req.user.email})` : 'Admin';

@@ -5,7 +5,11 @@ const OrderModel = {
   async getAll(filters = {}) {
     let sql = `
       SELECT o.*,
-             CONCAT(u.first_name, ' ', u.last_name) AS customer_name,
+             TRIM(CONCAT(u.first_name, ' ', COALESCE(CONCAT(u.middle_initial, ' '), ''), u.last_name)) AS customer_name,
+             u.first_name,
+             u.middle_name,
+             u.middle_initial,
+             u.last_name,
              u.email AS customer_email,
              c.phone AS customer_phone
       FROM orders o
@@ -32,7 +36,11 @@ const OrderModel = {
   async getById(id) {
     const orderSql = `
       SELECT o.*,
-             CONCAT(u.first_name, ' ', u.last_name) AS customer_name,
+             TRIM(CONCAT(u.first_name, ' ', COALESCE(CONCAT(u.middle_initial, ' '), ''), u.last_name)) AS customer_name,
+             u.first_name,
+             u.middle_name,
+             u.middle_initial,
+             u.last_name,
              u.email AS customer_email,
              c.phone AS customer_phone
       FROM orders o

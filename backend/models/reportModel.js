@@ -2,8 +2,7 @@ const { query } = require('../config/db');
 const { resolveDateRange, generateContinuousBuckets } = require('../utils/reportDateHelper');
 
 function getDateFormatString(granularity) {
-  if (granularity === 'yearly') return "'%Y'";
-  if (granularity === 'monthly') return "'%Y-%m'";
+  if (granularity === 'yearly') return "'%Y-%m'";
   return "'%Y-%m-%d'";
 }
 

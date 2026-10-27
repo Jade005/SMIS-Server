@@ -2,6 +2,7 @@ const UserModel = require('../models/userModel');
 const generateToken = require('../utils/generateToken');
 const { generateTemporaryPassword } = require('../utils/passwordHelper');
 const { query } = require('../config/db');
+const { getMiddleInitial, sanitizeMiddleName, getDisplayName, generateUniqueSystemEmail } = require('../utils/nameHelper');
 
 // In-memory rate limiting map for failed login attempts
 // Key: ip + ':' + identifier (normalized)
@@ -169,7 +170,10 @@ const login = async (req, res, next) => {
       user: {
         id: fullUser.id,
         first_name: fullUser.first_name,
+        middle_name: fullUser.middle_name || null,
+        middle_initial: fullUser.middle_initial || (fullUser.middle_name ? getMiddleInitial(fullUser.middle_name) : null),
         last_name: fullUser.last_name,
+        display_name: getDisplayName(fullUser),
         username: fullUser.username,
         email: fullUser.email,
         role: fullUser.role,
@@ -189,19 +193,28 @@ const login = async (req, res, next) => {
 
 const register = async (req, res, next) => {
   try {
-    const { first_name, last_name, username, email, password, phone, address } = req.body;
+    const { first_name, middle_name, last_name, username, email, password, phone, address } = req.body;
 
-    if (!first_name || !last_name || !email) {
-      return res.status(400).json({ message: 'First name, last name, and email address are required.' });
+    if (!first_name || !last_name) {
+      return res.status(400).json({ message: 'First name and last name are required.' });
     }
 
-    const cleanEmail = email.trim().toLowerCase();
+    const cleanMiddleName = middle_name ? sanitizeMiddleName(middle_name) : null;
+    const cleanMiddleInitial = cleanMiddleName ? getMiddleInitial(cleanMiddleName) : null;
+
+    let cleanEmail = email ? email.trim().toLowerCase() : await generateUniqueSystemEmail(first_name, last_name, query);
     const existingEmail = await UserModel.findByEmail(cleanEmail);
-    if (existingEmail) {
-      if (existingEmail.status === 'pending') {
-        return res.status(400).json({ message: 'Your account request was submitted. Please wait for admin approval.' });
+    const pendingQuery = await query('SELECT id FROM pending_registrations WHERE email = ? AND status = ?', [cleanEmail, 'pending']);
+
+    if (existingEmail || pendingQuery.length > 0) {
+      if (cleanEmail.endsWith('@smis.local')) {
+        cleanEmail = await generateUniqueSystemEmail(first_name, last_name, query);
+      } else {
+        if (existingEmail?.status === 'pending' || pendingQuery.length > 0) {
+          return res.status(400).json({ message: 'Your account request was submitted. Please wait for admin approval.' });
+        }
+        return res.status(400).json({ message: 'Email is already registered' });
       }
-      return res.status(400).json({ message: 'Email is already registered' });
     }
 
     let finalUsername = username ? username.trim() : `${first_name.trim().toLowerCase()}.${last_name.trim().toLowerCase()}`.replace(/[^a-z0-9.]/g, '');
@@ -215,12 +228,6 @@ const register = async (req, res, next) => {
       }
     }
 
-    // Check if the email exists in pending_registrations too
-    const pendingQuery = await query('SELECT id FROM pending_registrations WHERE email = ? AND status = ?', [cleanEmail, 'pending']);
-    if (pendingQuery.length > 0) {
-      return res.status(400).json({ message: 'Your account request was submitted. Please wait for admin approval.' });
-    }
-
     // Generate a default temporary password for the customer
     const cleanFirst = first_name.trim().toLowerCase().replace(/[^a-z0-9]/g, '');
     const cleanLast = last_name.trim().toLowerCase().replace(/[^a-z0-9]/g, '');
@@ -229,6 +236,8 @@ const register = async (req, res, next) => {
     // Save user account with status "pending" (is_active: 0)
     const userId = await UserModel.createUser({
       first_name: first_name.trim(),
+      middle_name: cleanMiddleName,
+      middle_initial: cleanMiddleInitial,
       last_name: last_name.trim(),
       username: finalUsername,
       email: cleanEmail,
@@ -242,13 +251,15 @@ const register = async (req, res, next) => {
 
     // Save into customers table with status "pending"
     await query(
-      'INSERT INTO customers (user_id, phone, address, username, status) VALUES (?, ?, ?, ?, ?)',
-      [userId, phone || null, address || null, finalUsername, 'pending']
+      'INSERT INTO customers (user_id, middle_name, middle_initial, phone, address, username, status) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      [userId, cleanMiddleName, cleanMiddleInitial, phone || null, address || null, finalUsername, 'pending']
     );
 
     // Also record in pending_registrations for admin queue compatibility
     await UserModel.createRegistration({
       first_name: first_name.trim(),
+      middle_name: cleanMiddleName,
+      middle_initial: cleanMiddleInitial,
       last_name: last_name.trim(),
       username: finalUsername,
       email: cleanEmail,
@@ -259,7 +270,8 @@ const register = async (req, res, next) => {
     // Do NOT issue a token — account must be approved by admin first
     res.status(201).json({
       message: 'Your account request was submitted. Please wait for admin approval.',
-      pending: true
+      pending: true,
+      email: cleanEmail
     });
   } catch (error) {
     next(error);
@@ -274,11 +286,27 @@ const getMe = async (req, res, next) => {
     res.json({
       user: {
         ...user,
+        middle_name: user.middle_name || null,
+        middle_initial: user.middle_initial || (user.middle_name ? getMiddleInitial(user.middle_name) : null),
+        display_name: getDisplayName(user),
         profile_picture: user.profile_picture || user.profile_image || null,
         profile_image: user.profile_picture || user.profile_image || null,
         must_change_password: false
       }
     });
+  } catch (error) {
+    next(error);
+  }
+};
+
+const suggestEmail = async (req, res, next) => {
+  try {
+    const { first_name, last_name } = req.query;
+    if (!first_name && !last_name) {
+      return res.json({ email: '' });
+    }
+    const email = await generateUniqueSystemEmail(first_name, last_name, query);
+    res.json({ email });
   } catch (error) {
     next(error);
   }
@@ -347,5 +375,6 @@ module.exports = {
   login,
   register,
   getMe,
+  suggestEmail,
   setPassword
 };

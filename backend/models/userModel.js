@@ -1,15 +1,16 @@
 const { query } = require('../config/db');
 const bcrypt = require('bcryptjs');
+const { getMiddleInitial } = require('../utils/nameHelper');
 
 const UserModel = {
   async findByEmail(email) {
-    const users = await query('SELECT id, first_name, last_name, username, email, password_hash, role, status, is_active, is_temp_password, temp_password_plain, profile_picture, created_at, updated_at FROM users WHERE email = ?', [email ?? null]);
+    const users = await query('SELECT id, first_name, middle_name, middle_initial, last_name, username, email, password_hash, role, status, is_active, is_temp_password, temp_password_plain, profile_picture, created_at, updated_at FROM users WHERE email = ?', [email ?? null]);
     return users[0] || null;
   },
 
   async findByUsername(username) {
     if (!username) return null;
-    const users = await query('SELECT id, first_name, last_name, username, email, password_hash, role, status, is_active, is_temp_password, temp_password_plain, profile_picture, created_at, updated_at FROM users WHERE username = ?', [username ?? null]);
+    const users = await query('SELECT id, first_name, middle_name, middle_initial, last_name, username, email, password_hash, role, status, is_active, is_temp_password, temp_password_plain, profile_picture, created_at, updated_at FROM users WHERE username = ?', [username ?? null]);
     return users[0] || null;
   },
 
@@ -29,7 +30,7 @@ const UserModel = {
     if (!identifier) return null;
     const cleanId = identifier ?? null;
     const users = await query(
-      'SELECT id, first_name, last_name, username, email, password_hash, role, status, is_active, is_temp_password, temp_password_plain, profile_picture, created_at, updated_at FROM users WHERE email = ? OR username = ?',
+      'SELECT id, first_name, middle_name, middle_initial, last_name, username, email, password_hash, role, status, is_active, is_temp_password, temp_password_plain, profile_picture, created_at, updated_at FROM users WHERE email = ? OR username = ?',
       [cleanId, cleanId]
     );
     return users[0] || null;
@@ -37,14 +38,14 @@ const UserModel = {
 
   async findById(id) {
     const users = await query(
-      'SELECT id, first_name, last_name, username, email, role, status, is_active, is_temp_password, temp_password_plain, profile_picture, registered_by, created_by_admin_id, created_at, updated_at FROM users WHERE id = ?',
+      'SELECT id, first_name, middle_name, middle_initial, last_name, username, email, role, status, is_active, is_temp_password, temp_password_plain, profile_picture, registered_by, created_by_admin_id, created_at, updated_at FROM users WHERE id = ?',
       [id ?? null]
     );
     return users[0] || null;
   },
 
   async getAllUsers(filters = {}) {
-    let sql = 'SELECT id, first_name, last_name, username, email, role, status, is_active, is_temp_password, temp_password_plain, profile_picture, registered_by, created_by_admin_id, created_at, updated_at FROM users WHERE deleted_at IS NULL';
+    let sql = 'SELECT id, first_name, middle_name, middle_initial, last_name, username, email, role, status, is_active, is_temp_password, temp_password_plain, profile_picture, registered_by, created_by_admin_id, created_at, updated_at FROM users WHERE deleted_at IS NULL';
     const params = [];
 
     if (filters.role) {
@@ -68,6 +69,8 @@ const UserModel = {
 
   async createUser({
     first_name,
+    middle_name = null,
+    middle_initial = null,
     last_name,
     username,
     email,
@@ -87,6 +90,7 @@ const UserModel = {
       password_hash = await bcrypt.hash(password, salt);
     }
 
+    const calculatedMi = middle_initial || (middle_name ? getMiddleInitial(middle_name) : null);
     const accountStatus = status || (role === 'customer' ? 'pending' : 'active');
     const active = is_active !== undefined
       ? (is_active ? 1 : 0)
@@ -96,9 +100,11 @@ const UserModel = {
     const adminCreator = created_by_admin_id || registered_by || null;
 
     const result = await query(
-      'INSERT INTO users (first_name, last_name, username, email, password_hash, role, status, is_active, is_temp_password, temp_password_plain, profile_picture, registered_by, created_by_admin_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      'INSERT INTO users (first_name, middle_name, middle_initial, last_name, username, email, password_hash, role, status, is_active, is_temp_password, temp_password_plain, profile_picture, registered_by, created_by_admin_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       [
         first_name ?? null,
+        middle_name ?? null,
+        calculatedMi ?? null,
         last_name ?? null,
         username ?? null,
         email ?? null,
@@ -117,7 +123,7 @@ const UserModel = {
     return result.insertId;
   },
 
-  async updateUser(id, { first_name, last_name, username, email, role, is_active, password, profile_picture }) {
+  async updateUser(id, { first_name, middle_name, middle_initial, last_name, username, email, role, is_active, password, profile_picture }) {
     const currentUser = await this.findById(id);
     if (!currentUser) return null;
 
@@ -130,6 +136,16 @@ const UserModel = {
     const params = [];
 
     if (first_name !== undefined) { updates.push('first_name = ?'); params.push(first_name); }
+    if (middle_name !== undefined) {
+      const cleanMn = middle_name ? String(middle_name).trim() : null;
+      const cleanMi = middle_initial !== undefined
+        ? (middle_initial ? String(middle_initial).trim() : null)
+        : (cleanMn ? getMiddleInitial(cleanMn) : null);
+      updates.push('middle_name = ?'); params.push(cleanMn);
+      updates.push('middle_initial = ?'); params.push(cleanMi);
+    } else if (middle_initial !== undefined) {
+      updates.push('middle_initial = ?'); params.push(middle_initial ? String(middle_initial).trim() : null);
+    }
     if (last_name !== undefined) { updates.push('last_name = ?'); params.push(last_name); }
     if (username !== undefined) { updates.push('username = ?'); params.push(username); }
     if (email !== undefined) { updates.push('email = ?'); params.push(email); }
@@ -148,6 +164,16 @@ const UserModel = {
     if (updates.length > 0) {
       params.push(id);
       await query(`UPDATE users SET ${updates.join(', ')} WHERE id = ?`, params);
+    }
+
+    if (middle_name !== undefined) {
+      try {
+        const cleanMn = middle_name ? String(middle_name).trim() : null;
+        const cleanMi = cleanMn ? getMiddleInitial(cleanMn) : null;
+        await query('UPDATE customers SET middle_name = ?, middle_initial = ? WHERE user_id = ?', [cleanMn, cleanMi, id]);
+      } catch (e) {
+        // customers table may not have matching row or column, ignore
+      }
     }
 
     if (username !== undefined) {
@@ -237,7 +263,7 @@ const UserModel = {
 
   async getPendingUsers() {
     return await query(
-      `SELECT u.id, u.first_name, u.last_name, u.username, u.email, u.role, u.is_active, u.is_temp_password, u.temp_password_plain, u.profile_picture, u.created_at,
+      `SELECT u.id, u.first_name, u.middle_name, u.middle_initial, u.last_name, u.username, u.email, u.role, u.is_active, u.is_temp_password, u.temp_password_plain, u.profile_picture, u.created_at,
               c.phone, c.address
        FROM users u
        LEFT JOIN customers c ON c.user_id = u.id
@@ -257,7 +283,7 @@ const UserModel = {
 
   async getProfile(userId) {
     const rows = await query(
-      `SELECT u.id, u.first_name, u.last_name, u.username, u.email, u.role, u.is_active, u.is_temp_password,
+      `SELECT u.id, u.first_name, u.middle_name, u.middle_initial, u.last_name, u.username, u.email, u.role, u.is_active, u.is_temp_password,
               COALESCE(u.profile_picture, c.profile_image) AS profile_picture,
               COALESCE(c.profile_image, u.profile_picture) AS profile_image,
               u.created_at,
@@ -270,9 +296,13 @@ const UserModel = {
     return rows[0] || null;
   },
 
-  async updateProfile(userId, { first_name, last_name, username, email, phone, contact_number, address, profile_picture }) {
+  async updateProfile(userId, { first_name, middle_name, middle_initial, last_name, username, email, phone, contact_number, address, profile_picture }) {
     const cleanFirstName = first_name ?? null;
     const cleanLastName = last_name ?? null;
+    const cleanMiddleName = middle_name !== undefined ? (middle_name ? String(middle_name).trim() : null) : undefined;
+    const cleanMiddleInitial = middle_initial !== undefined
+      ? (middle_initial ? String(middle_initial).trim() : null)
+      : (cleanMiddleName ? getMiddleInitial(cleanMiddleName) : (cleanMiddleName === null ? null : undefined));
     const cleanUsername = username ?? null;
     const cleanEmail = email ?? null;
     const cleanPhone = (contact_number || phone) ?? null;
@@ -286,21 +316,36 @@ const UserModel = {
       finalProfilePicture = profile_picture ? profile_picture : null;
     }
 
-    await query(
-      'UPDATE users SET first_name = ?, last_name = ?, email = ?, username = ?, profile_picture = ? WHERE id = ?',
-      [cleanFirstName, cleanLastName, cleanEmail, cleanUsername, finalProfilePicture, userId]
-    );
+    const updates = ['first_name = ?', 'last_name = ?', 'email = ?', 'username = ?', 'profile_picture = ?'];
+    const params = [cleanFirstName, cleanLastName, cleanEmail, cleanUsername, finalProfilePicture];
+
+    if (cleanMiddleName !== undefined) {
+      updates.push('middle_name = ?');
+      params.push(cleanMiddleName);
+      updates.push('middle_initial = ?');
+      params.push(cleanMiddleInitial ?? null);
+    }
+
+    params.push(userId);
+    await query(`UPDATE users SET ${updates.join(', ')} WHERE id = ?`, params);
 
     const existingCust = await query('SELECT id FROM customers WHERE user_id = ?', [userId]);
     if (existingCust.length > 0) {
+      const custUpdates = ['phone = ?', 'contact_number = ?', 'address = ?, profile_image = ?, username = ?'];
+      const custParams = [cleanPhone, cleanPhone, cleanAddress, finalProfilePicture, cleanUsername];
+      if (cleanMiddleName !== undefined) {
+        custUpdates.push('middle_name = ?', 'middle_initial = ?');
+        custParams.push(cleanMiddleName, cleanMiddleInitial ?? null);
+      }
+      custParams.push(userId);
       await query(
-        'UPDATE customers SET phone = ?, contact_number = ?, address = ?, profile_image = ?, username = ? WHERE user_id = ?',
-        [cleanPhone, cleanPhone, cleanAddress, finalProfilePicture, cleanUsername, userId]
+        `UPDATE customers SET ${custUpdates.join(', ')} WHERE user_id = ?`,
+        custParams
       );
-    } else if (currentUser && currentUser.role === 'customer' && (cleanPhone || cleanAddress)) {
+    } else if (currentUser && currentUser.role === 'customer' && (cleanPhone || cleanAddress || cleanMiddleName !== undefined)) {
       await query(
-        'INSERT INTO customers (user_id, phone, contact_number, address, profile_image, username) VALUES (?, ?, ?, ?, ?, ?)',
-        [userId, cleanPhone, cleanPhone, cleanAddress, finalProfilePicture, cleanUsername]
+        'INSERT INTO customers (user_id, middle_name, middle_initial, phone, contact_number, address, profile_image, username) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+        [userId, cleanMiddleName ?? null, cleanMiddleInitial ?? null, cleanPhone, cleanPhone, cleanAddress, finalProfilePicture, cleanUsername]
       );
     }
 
@@ -318,10 +363,11 @@ const UserModel = {
     return this.getProfile(userId);
   },
 
-  async createRegistration({ first_name, last_name, username, email, phone, address }) {
+  async createRegistration({ first_name, middle_name = null, middle_initial = null, last_name, username, email, phone, address }) {
+    const calculatedMi = middle_initial || (middle_name ? getMiddleInitial(middle_name) : null);
     const result = await query(
-      'INSERT INTO pending_registrations (first_name, last_name, username, email, phone, address, status) VALUES (?, ?, ?, ?, ?, ?, ?)',
-      [first_name, last_name, username, email, phone, address, 'pending']
+      'INSERT INTO pending_registrations (first_name, middle_name, middle_initial, last_name, username, email, phone, address, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [first_name, middle_name, calculatedMi, last_name, username, email, phone, address, 'pending']
     );
     return result.insertId;
   },
@@ -331,6 +377,8 @@ const UserModel = {
       SELECT 
         p.id,
         p.first_name,
+        p.middle_name,
+        p.middle_initial,
         p.last_name,
         p.email,
         p.phone,
@@ -344,6 +392,8 @@ const UserModel = {
       SELECT 
         u.id,
         u.first_name,
+        u.middle_name,
+        u.middle_initial,
         u.last_name,
         u.email,
         c.phone,
@@ -365,7 +415,7 @@ const UserModel = {
 
     // Fallback to checking users table if not in pending_registrations
     const userRows = await query(
-      `SELECT u.id, u.first_name, u.last_name, u.username, u.email, u.status, u.created_at, c.phone, c.address
+      `SELECT u.id, u.first_name, u.middle_name, u.middle_initial, u.last_name, u.username, u.email, u.status, u.created_at, c.phone, c.address
        FROM users u
        LEFT JOIN customers c ON c.user_id = u.id
        WHERE u.id = ?`,

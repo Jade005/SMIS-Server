@@ -1,6 +1,7 @@
 const CustomerModel = require('../models/customerModel');
 const UserModel = require('../models/userModel');
 const { saveAvatarImage } = require('../utils/avatarStorage');
+const { sanitizeMiddleName, getMiddleInitial } = require('../utils/nameHelper');
 const bcrypt = require('bcryptjs');
 
 const getProfile = async (req, res, next) => {
@@ -18,7 +19,7 @@ const getProfile = async (req, res, next) => {
 const updateProfile = async (req, res, next) => {
   try {
     const userId = req.user.id;
-    const { first_name, last_name, username, email, contact_number, phone, profile_image, profile_picture, address } = req.body;
+    const { first_name, middle_name, middle_initial, last_name, username, email, contact_number, phone, profile_image, profile_picture, address } = req.body;
 
     const inputImg = (profile_picture !== undefined ? profile_picture : profile_image);
 
@@ -26,6 +27,11 @@ const updateProfile = async (req, res, next) => {
     if (!first_name || !first_name.trim() || !last_name || !last_name.trim()) {
       return res.status(400).json({ message: 'First name and Last name are required.' });
     }
+
+    const cleanMiddleName = middle_name !== undefined ? (middle_name ? sanitizeMiddleName(middle_name) : null) : undefined;
+    const cleanMiddleInitial = cleanMiddleName !== undefined
+      ? (cleanMiddleName ? getMiddleInitial(cleanMiddleName) : null)
+      : undefined;
 
     if (!username || !username.trim()) {
       return res.status(400).json({ message: 'Username is required.' });
@@ -59,6 +65,8 @@ const updateProfile = async (req, res, next) => {
 
     const updatedProfile = await UserModel.updateProfile(userId, {
       first_name: first_name.trim(),
+      middle_name: cleanMiddleName,
+      middle_initial: cleanMiddleInitial,
       last_name: last_name.trim(),
       username: username.trim(),
       email: email.trim(),

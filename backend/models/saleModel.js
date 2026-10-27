@@ -5,8 +5,8 @@ const SaleModel = {
   async getAll(filters = {}) {
     let sql = `
       SELECT s.*,
-             CONCAT(u.first_name, ' ', u.last_name) AS cashier_name,
-             CONCAT(cu.first_name, ' ', cu.last_name) AS customer_name
+             TRIM(CONCAT(u.first_name, ' ', COALESCE(CONCAT(u.middle_initial, ' '), ''), u.last_name)) AS cashier_name,
+             TRIM(CONCAT(cu.first_name, ' ', COALESCE(CONCAT(cu.middle_initial, ' '), ''), cu.last_name)) AS customer_name
       FROM sales s
       INNER JOIN users u ON s.cashier_id = u.id
       LEFT JOIN customers c ON s.customer_id = c.id
@@ -32,8 +32,8 @@ const SaleModel = {
   async getById(id) {
     const saleSql = `
       SELECT s.*,
-             CONCAT(u.first_name, ' ', u.last_name) AS cashier_name,
-             CONCAT(cu.first_name, ' ', cu.last_name) AS customer_name
+             TRIM(CONCAT(u.first_name, ' ', COALESCE(CONCAT(u.middle_initial, ' '), ''), u.last_name)) AS cashier_name,
+             TRIM(CONCAT(cu.first_name, ' ', COALESCE(CONCAT(cu.middle_initial, ' '), ''), cu.last_name)) AS customer_name
       FROM sales s
       INNER JOIN users u ON s.cashier_id = u.id
       LEFT JOIN customers c ON s.customer_id = c.id

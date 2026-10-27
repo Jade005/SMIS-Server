@@ -60,6 +60,37 @@ async function runMigration() {
       }
     }
 
+    // 5b. Add middle_name and middle_initial to users, customers, and pending_registrations
+    try {
+      await query('ALTER TABLE users ADD COLUMN middle_name VARCHAR(100) NULL AFTER first_name');
+      console.log('✅ Added "middle_name" column to users table.');
+    } catch (e) {}
+
+    try {
+      await query('ALTER TABLE users ADD COLUMN middle_initial VARCHAR(10) NULL AFTER middle_name');
+      console.log('✅ Added "middle_initial" column to users table.');
+    } catch (e) {}
+
+    try {
+      await query('ALTER TABLE customers ADD COLUMN middle_name VARCHAR(100) NULL AFTER user_id');
+      console.log('✅ Added "middle_name" column to customers table.');
+    } catch (e) {}
+
+    try {
+      await query('ALTER TABLE customers ADD COLUMN middle_initial VARCHAR(10) NULL AFTER middle_name');
+      console.log('✅ Added "middle_initial" column to customers table.');
+    } catch (e) {}
+
+    try {
+      await query('ALTER TABLE pending_registrations ADD COLUMN middle_name VARCHAR(100) NULL AFTER first_name');
+      console.log('✅ Added "middle_name" column to pending_registrations table.');
+    } catch (e) {}
+
+    try {
+      await query('ALTER TABLE pending_registrations ADD COLUMN middle_initial VARCHAR(10) NULL AFTER middle_name');
+      console.log('✅ Added "middle_initial" column to pending_registrations table.');
+    } catch (e) {}
+
     // 6. Add temp_password_plain column to users table if missing
     try {
       await query('ALTER TABLE users ADD COLUMN temp_password_plain VARCHAR(255) NULL AFTER is_temp_password');
