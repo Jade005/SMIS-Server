@@ -104,7 +104,7 @@ const login = async (req, res, next) => {
     // Check status: only 'active' can log in
     if (user.status === 'pending') {
       recordFailedAttempt(rateLimitKey);
-      return res.status(403).json({ message: 'Your account is waiting for admin approval.' });
+      return res.status(403).json({ message: 'Your account is pending admin approval.' });
     }
 
     if (user.status === 'rejected') {
@@ -115,9 +115,6 @@ const login = async (req, res, next) => {
     // Check active status
     if (!user.is_active || user.status !== 'active') {
       recordFailedAttempt(rateLimitKey);
-      if (user.role === 'customer') {
-        return res.status(403).json({ message: 'Your account is waiting for admin approval.' });
-      }
       return res.status(403).json({ message: 'Your account has been deactivated. Contact the administrator.' });
     }
 
@@ -125,7 +122,7 @@ const login = async (req, res, next) => {
     if (!user.password_hash) {
       recordFailedAttempt(rateLimitKey);
       return res.status(403).json({
-        message: 'Your account is approved but you haven\'t set a password. Please check your email for the activation link to set your password.'
+        message: 'Your account is pending password setup.'
       });
     }
 
@@ -166,7 +163,7 @@ const login = async (req, res, next) => {
     res.json({
       message: 'Login successful',
       token,
-      must_change_password: false,
+      must_change_password: Boolean(fullUser.is_temp_password),
       user: {
         id: fullUser.id,
         first_name: fullUser.first_name,
@@ -177,9 +174,10 @@ const login = async (req, res, next) => {
         username: fullUser.username,
         email: fullUser.email,
         role: fullUser.role,
+        status: fullUser.status,
         is_active: fullUser.is_active,
         is_temp_password: fullUser.is_temp_password,
-        must_change_password: false,
+        must_change_password: Boolean(fullUser.is_temp_password),
         profile_picture: fullUser.profile_picture || fullUser.profile_image || null,
         profile_image: fullUser.profile_picture || fullUser.profile_image || null,
         contact_number: fullUser.contact_number || fullUser.phone || null,
@@ -193,7 +191,7 @@ const login = async (req, res, next) => {
 
 const register = async (req, res, next) => {
   try {
-    const { first_name, middle_name, last_name, username, email, password, phone, address } = req.body;
+    const { first_name, middle_name, last_name, username, email, phone, address } = req.body;
 
     if (!first_name || !last_name) {
       return res.status(400).json({ message: 'First name and last name are required.' });
@@ -228,34 +226,8 @@ const register = async (req, res, next) => {
       }
     }
 
-    // Generate a default temporary password for the customer
-    const cleanFirst = first_name.trim().toLowerCase().replace(/[^a-z0-9]/g, '');
-    const cleanLast = last_name.trim().toLowerCase().replace(/[^a-z0-9]/g, '');
-    const tempPassword = `${cleanFirst}${cleanLast}123` || generateTemporaryPassword(10);
-
-    // Save user account with status "pending" (is_active: 0)
-    const userId = await UserModel.createUser({
-      first_name: first_name.trim(),
-      middle_name: cleanMiddleName,
-      middle_initial: cleanMiddleInitial,
-      last_name: last_name.trim(),
-      username: finalUsername,
-      email: cleanEmail,
-      password: tempPassword,
-      role: 'customer',
-      status: 'pending',
-      is_active: 0,
-      is_temp_password: 1,
-      temp_password_plain: tempPassword
-    });
-
-    // Save into customers table with status "pending"
-    await query(
-      'INSERT INTO customers (user_id, middle_name, middle_initial, phone, address, username, status) VALUES (?, ?, ?, ?, ?, ?, ?)',
-      [userId, cleanMiddleName, cleanMiddleInitial, phone || null, address || null, finalUsername, 'pending']
-    );
-
-    // Also record in pending_registrations for admin queue compatibility
+    // REQUIREMENT 1: Public "Open Account" registration creates the record with status = 'pending'.
+    // Do NOT create an active user row, do NOT generate or store a password, and do NOT set role = 'user' as an active account at this point.
     await UserModel.createRegistration({
       first_name: first_name.trim(),
       middle_name: cleanMiddleName,

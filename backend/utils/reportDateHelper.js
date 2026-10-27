@@ -17,7 +17,7 @@ function formatDate(d) {
 /**
  * Returns validated `from` and `to` strings (YYYY-MM-DD) based on granularity.
  */
-function resolveDateRange({ granularity = 'daily', from, to }) {
+function resolveDateRange({ granularity = 'daily', from, to, start_date, end_date }) {
   const cleanGranularity = ['daily', 'monthly', 'yearly'].includes(granularity)
     ? granularity
     : 'daily';
@@ -40,8 +40,11 @@ function resolveDateRange({ granularity = 'daily', from, to }) {
     defaultTo = formatDate(today);
   }
 
-  const finalFrom = from && /^\d{4}-\d{2}-\d{2}$/.test(from) ? from : defaultFrom;
-  const finalTo = to && /^\d{4}-\d{2}-\d{2}$/.test(to) ? to : defaultTo;
+  const effectiveFrom = from || start_date;
+  const effectiveTo = to || end_date;
+
+  const finalFrom = effectiveFrom && /^\d{4}-\d{2}-\d{2}$/.test(effectiveFrom) ? effectiveFrom : defaultFrom;
+  const finalTo = effectiveTo && /^\d{4}-\d{2}-\d{2}$/.test(effectiveTo) ? effectiveTo : defaultTo;
 
   return {
     granularity: cleanGranularity,

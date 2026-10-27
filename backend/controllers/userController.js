@@ -361,7 +361,7 @@ const resetPassword = async (req, res, next) => {
         const tempPassword = req.body?.password || generateTemporaryPassword(10);
         await UserModel.resetPasswordWithTemp(user.id, tempPassword);
 
-        const fullName = `${user.first_name} ${user.last_name}`;
+        const fullName = getDisplayName(user);
         const username = user.username || user.email;
 
         const emailResult = await sendAccountCredentialsEmail({
@@ -373,7 +373,8 @@ const resetPassword = async (req, res, next) => {
         });
 
         res.json({
-            message: `Password reset successfully for ${fullName}. New credentials sent to ${user.email}.`,
+            message: `Password reset successfully for ${fullName}.`,
+            temp_password: tempPassword,
             email_sent: emailResult.success,
             email_fallback: Boolean(emailResult.fallback)
         });
@@ -392,79 +393,133 @@ const getPendingRegistrations = async (req, res, next) => {
 };
 
 const approveRegistration = async (req, res, next) => {
+    let conn = null;
     try {
-        const { query } = require('../config/db');
-        const reg = await UserModel.getRegistrationById(req.params.id);
+        const { pool } = require('../config/db');
+        const bcrypt = require('bcryptjs');
+        conn = await pool.getConnection();
+        await conn.beginTransaction();
+
+        // 1. Lock and fetch registration from pending_registrations
+        const [regRows] = await conn.execute(
+            'SELECT * FROM pending_registrations WHERE id = ? FOR UPDATE',
+            [req.params.id]
+        );
+        let reg = regRows[0];
+
+        // Fallback: check users table if not found in pending_registrations
+        if (!reg) {
+            const [userRows] = await conn.execute(
+                `SELECT u.id, u.first_name, u.middle_name, u.middle_initial, u.last_name, u.username, u.email, u.status, u.created_at, c.phone, c.address
+                 FROM users u
+                 LEFT JOIN customers c ON c.user_id = u.id
+                 WHERE u.id = ? AND u.status = 'pending' FOR UPDATE`,
+                [req.params.id]
+            );
+            reg = userRows[0];
+        }
+
         if (!reg || reg.status !== 'pending') {
+            await conn.rollback();
             return res.status(404).json({ message: 'Registration not found or not pending.' });
         }
 
-        let userId = null;
-        let tempPassword = generateTemporaryPassword(10);
+        // 2. Generate temporary password at this moment
+        const tempPassword = generateTemporaryPassword(10);
+        const salt = await bcrypt.genSalt(12);
+        const passwordHash = await bcrypt.hash(tempPassword, salt);
+
+        // 3. Username and email preparation
         let finalUsername = reg.username;
+        if (!finalUsername) {
+            finalUsername = `${reg.first_name.trim().toLowerCase()}.${reg.last_name.trim().toLowerCase()}`.replace(/[^a-z0-9.]/g, '');
+        }
+        const [existingUsernames] = await conn.execute(
+            'SELECT id FROM users WHERE username = ? AND email != ?',
+            [finalUsername, reg.email]
+        );
+        if (existingUsernames.length > 0) {
+            finalUsername = `${finalUsername}${Math.floor(100 + Math.random() * 900)}`;
+        }
 
-        // Check if user already exists in users table
-        const existingUser = await UserModel.findByEmail(reg.email);
+        const regMi = reg.middle_initial || (reg.middle_name ? getMiddleInitial(reg.middle_name) : null);
+        let userId = null;
 
-        if (existingUser) {
-            if (existingUser.status === 'active' && existingUser.is_active) {
-                return res.status(400).json({ message: 'An active account with this email already exists.' });
-            }
-            userId = existingUser.id;
-            finalUsername = existingUser.username || reg.username;
+        // 4. Check if user already exists in users table (e.g. from previous pending state)
+        const [existingUsers] = await conn.execute(
+            'SELECT id, email, status FROM users WHERE email = ? FOR UPDATE',
+            [reg.email]
+        );
 
-            // Activate user and set status to active
-            await query(
-                'UPDATE users SET status = ?, is_active = 1 WHERE id = ?',
-                ['active', userId]
+        if (existingUsers.length > 0) {
+            userId = existingUsers[0].id;
+            // Update to active, set password hash, temp password flag = 1, temp_password_plain = NULL
+            await conn.execute(
+                `UPDATE users
+                 SET status = 'active',
+                     is_active = 1,
+                     password_hash = ?,
+                     is_temp_password = 1,
+                     temp_password_plain = NULL,
+                     username = ?,
+                     middle_name = COALESCE(?, middle_name),
+                     middle_initial = COALESCE(?, middle_initial),
+                     updated_at = NOW()
+                 WHERE id = ?`,
+                [passwordHash, finalUsername, reg.middle_name || null, regMi, userId]
             );
 
-            // Activate customer record
-            await query(
-                'UPDATE customers SET status = ? WHERE user_id = ?',
-                ['active', userId]
+            // Update customers table
+            await conn.execute(
+                `UPDATE customers
+                 SET status = 'active',
+                     username = ?,
+                     phone = COALESCE(?, phone),
+                     address = COALESCE(?, address),
+                     updated_at = NOW()
+                 WHERE user_id = ?`,
+                [finalUsername, reg.phone || null, reg.address || null, userId]
             );
-
-            // If user has a plain temp password already saved, reuse it; otherwise set new temp password
-            if (existingUser.temp_password_plain) {
-                tempPassword = existingUser.temp_password_plain;
-            } else if (!existingUser.password_hash) {
-                await UserModel.resetPasswordWithTemp(userId, tempPassword);
-            }
         } else {
-            // User not yet in users table, create active account
-            if (!finalUsername) {
-                finalUsername = `${reg.first_name.trim().toLowerCase()}.${reg.last_name.trim().toLowerCase()}`.replace(/[^a-z0-9.]/g, '');
-            }
-            const existingUsername = await UserModel.findByUsername(finalUsername);
-            if (existingUsername) {
-                finalUsername = `${finalUsername}${Math.floor(100 + Math.random() * 900)}`;
-            }
+            // Create brand new active user row inside transaction
+            const [insertUser] = await conn.execute(
+                `INSERT INTO users (first_name, middle_name, middle_initial, last_name, username, email, password_hash, role, status, is_active, is_temp_password, temp_password_plain, created_at, updated_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, 'customer', 'active', 1, 1, NULL, NOW(), NOW())`,
+                [
+                    reg.first_name,
+                    reg.middle_name || null,
+                    regMi,
+                    reg.last_name,
+                    finalUsername,
+                    reg.email,
+                    passwordHash
+                ]
+            );
+            userId = insertUser.insertId;
 
-            const regMi = reg.middle_initial || (reg.middle_name ? getMiddleInitial(reg.middle_name) : null);
-            userId = await UserModel.createUser({
-                first_name: reg.first_name,
-                middle_name: reg.middle_name || null,
-                middle_initial: regMi,
-                last_name: reg.last_name,
-                username: finalUsername,
-                email: reg.email,
-                password: tempPassword,
-                role: 'customer',
-                status: 'active',
-                is_active: 1,
-                is_temp_password: 1,
-                temp_password_plain: tempPassword
-            });
-
-            await query(
-                'INSERT INTO customers (user_id, middle_name, middle_initial, phone, address, username, status) VALUES (?, ?, ?, ?, ?, ?, ?)',
-                [userId, reg.middle_name || null, regMi, reg.phone || null, reg.address || null, finalUsername, 'active']
+            await conn.execute(
+                `INSERT INTO customers (user_id, middle_name, middle_initial, phone, contact_number, address, username, status, created_at, updated_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, 'active', NOW(), NOW())`,
+                [
+                    userId,
+                    reg.middle_name || null,
+                    regMi,
+                    reg.phone || null,
+                    reg.phone || null,
+                    reg.address || null,
+                    finalUsername
+                ]
             );
         }
 
-        // Mark pending registration as approved
-        await query('UPDATE pending_registrations SET status = ? WHERE id = ? OR email = ?', ['approved', reg.id, reg.email]);
+        // 5. Update pending_registrations table to 'approved'
+        await conn.execute(
+            'UPDATE pending_registrations SET status = \'approved\' WHERE id = ? OR email = ?',
+            [reg.id, reg.email]
+        );
+
+        // Commit all changes in this single transaction
+        await conn.commit();
 
         const user = await UserModel.findById(userId);
         const fullName = getDisplayName(user || reg);
@@ -473,9 +528,9 @@ const approveRegistration = async (req, res, next) => {
         const adminActor = req.user ? `Admin ID ${req.user.id} (${req.user.username || req.user.email})` : 'Admin';
         console.log(`[AUDIT] [${new Date().toISOString()}] ${adminActor} approved (registered) account for ${fullName} (email: ${reg.email}, username: ${finalUsername}, status: active).`);
 
-        // Send credentials email (graceful)
+        // Send credentials email (graceful, don't throw)
         const emailResult = await sendAccountCredentialsEmail({
-            email: user.email,
+            email: reg.email,
             fullName,
             username: finalUsername,
             tempPassword,
@@ -490,33 +545,74 @@ const approveRegistration = async (req, res, next) => {
             email_fallback: Boolean(emailResult.fallback)
         });
     } catch (error) {
+        if (conn) {
+            try { await conn.rollback(); } catch (rbErr) {}
+        }
         next(error);
+    } finally {
+        if (conn) conn.release();
     }
 };
 
 const rejectRegistration = async (req, res, next) => {
+    let conn = null;
     try {
-        const { query } = require('../config/db');
-        const reg = await UserModel.getRegistrationById(req.params.id);
+        const { pool } = require('../config/db');
+        conn = await pool.getConnection();
+        await conn.beginTransaction();
+
+        const [regRows] = await conn.execute(
+            'SELECT * FROM pending_registrations WHERE id = ? FOR UPDATE',
+            [req.params.id]
+        );
+        let reg = regRows[0];
+
+        if (!reg) {
+            const [userRows] = await conn.execute(
+                'SELECT u.id, u.first_name, u.last_name, u.email, u.status FROM users u WHERE u.id = ? AND u.status = \'pending\' FOR UPDATE',
+                [req.params.id]
+            );
+            reg = userRows[0];
+        }
+
         if (!reg || reg.status !== 'pending') {
+            await conn.rollback();
             return res.status(404).json({ message: 'Registration not found or not pending.' });
         }
 
-        // Update pending_registrations table
-        await query('UPDATE pending_registrations SET status = ? WHERE id = ? OR email = ?', ['rejected', reg.id, reg.email]);
+        const rejectionReason = req.body?.reason ? String(req.body.reason).trim() : null;
 
-        // Update users table status to 'rejected' and deactivate
-        await query('UPDATE users SET status = ?, is_active = 0 WHERE id = ? OR email = ?', ['rejected', reg.id, reg.email]);
+        // 1. Update pending_registrations table
+        await conn.execute(
+            'UPDATE pending_registrations SET status = \'rejected\', rejection_reason = ? WHERE id = ? OR email = ?',
+            [rejectionReason, reg.id, reg.email]
+        );
 
-        // Update customers table status to 'rejected'
-        await query('UPDATE customers SET status = ? WHERE user_id = ? OR user_id IN (SELECT id FROM users WHERE email = ?)', ['rejected', reg.id, reg.email]);
+        // 2. Update users table status to 'rejected', deactivate, and clear password
+        await conn.execute(
+            'UPDATE users SET status = \'rejected\', is_active = 0, password_hash = NULL, temp_password_plain = NULL, updated_at = NOW() WHERE email = ? OR id = ?',
+            [reg.email, reg.id]
+        );
+
+        // 3. Update customers table status to 'rejected'
+        await conn.execute(
+            'UPDATE customers SET status = \'rejected\', updated_at = NOW() WHERE user_id IN (SELECT id FROM users WHERE email = ?)',
+            [reg.email]
+        );
+
+        await conn.commit();
 
         const adminActor = req.user ? `Admin ID ${req.user.id} (${req.user.username || req.user.email})` : 'Admin';
-        console.log(`[AUDIT] [${new Date().toISOString()}] ${adminActor} rejected account request for ${reg.first_name} ${reg.last_name} (${reg.email}).`);
+        console.log(`[AUDIT] [${new Date().toISOString()}] ${adminActor} rejected account request for ${reg.first_name} ${reg.last_name} (${reg.email}). Reason: ${rejectionReason || 'None provided'}`);
 
         res.json({ message: `Account request for ${reg.first_name} ${reg.last_name} was rejected.` });
     } catch (error) {
+        if (conn) {
+            try { await conn.rollback(); } catch (rbErr) {}
+        }
         next(error);
+    } finally {
+        if (conn) conn.release();
     }
 };
 

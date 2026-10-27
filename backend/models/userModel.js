@@ -45,7 +45,14 @@ const UserModel = {
   },
 
   async getAllUsers(filters = {}) {
-    let sql = 'SELECT id, first_name, middle_name, middle_initial, last_name, username, email, role, status, is_active, is_temp_password, temp_password_plain, profile_picture, registered_by, created_by_admin_id, created_at, updated_at FROM users WHERE deleted_at IS NULL';
+    let sql = `
+      SELECT id, first_name, middle_name, middle_initial, last_name, username, email,
+             role, status, is_active, is_temp_password, profile_picture,
+             registered_by, created_by_admin_id, created_at, updated_at
+      FROM users
+      WHERE deleted_at IS NULL
+        AND status NOT IN ('pending', 'rejected')
+    `;
     const params = [];
 
     if (filters.role) {
@@ -54,13 +61,19 @@ const UserModel = {
     }
 
     if (filters.status) {
-      sql += ' AND status = ?';
-      params.push(filters.status);
+      if (filters.status === 'active') {
+        sql += ' AND (status = \'active\' AND is_active = 1)';
+      } else if (filters.status === 'deactivated' || filters.status === 'inactive') {
+        sql += ' AND (status = \'deactivated\' OR is_active = 0)';
+      } else {
+        sql += ' AND status = ?';
+        params.push(filters.status);
+      }
     }
 
     if (filters.is_active !== undefined) {
       sql += ' AND is_active = ?';
-      params.push(filters.is_active);
+      params.push(filters.is_active ? 1 : 0);
     }
 
     sql += ' ORDER BY created_at DESC';
@@ -96,11 +109,10 @@ const UserModel = {
       ? (is_active ? 1 : 0)
       : (accountStatus === 'active' ? 1 : 0);
     const tempPassFlag = is_temp_password ? 1 : 0;
-    const plainTemp = tempPassFlag && password ? (temp_password_plain || password) : null;
     const adminCreator = created_by_admin_id || registered_by || null;
 
     const result = await query(
-      'INSERT INTO users (first_name, middle_name, middle_initial, last_name, username, email, password_hash, role, status, is_active, is_temp_password, temp_password_plain, profile_picture, registered_by, created_by_admin_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      'INSERT INTO users (first_name, middle_name, middle_initial, last_name, username, email, password_hash, role, status, is_active, is_temp_password, temp_password_plain, profile_picture, registered_by, created_by_admin_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?)',
       [
         first_name ?? null,
         middle_name ?? null,
@@ -113,7 +125,6 @@ const UserModel = {
         accountStatus,
         active,
         tempPassFlag,
-        plainTemp,
         profile_picture ?? null,
         adminCreator,
         adminCreator
@@ -199,22 +210,26 @@ const UserModel = {
     const salt = await bcrypt.genSalt(12);
     const password_hash = await bcrypt.hash(tempPassword, salt);
 
-    await query('UPDATE users SET password_hash = ?, is_temp_password = 1, temp_password_plain = ? WHERE id = ?', [password_hash, tempPassword, id]);
+    await query('UPDATE users SET password_hash = ?, is_temp_password = 1, temp_password_plain = NULL WHERE id = ?', [password_hash, id]);
     return true;
   },
 
   async toggleStatus(id, is_active) {
-    await query('UPDATE users SET is_active = ?, updated_at = NOW() WHERE id = ?', [is_active ? 1 : 0, id]);
+    const newStatus = is_active ? 'active' : 'deactivated';
+    await query('UPDATE users SET is_active = ?, status = ?, updated_at = NOW() WHERE id = ?', [is_active ? 1 : 0, newStatus, id]);
+    await query('UPDATE customers SET status = ?, updated_at = NOW() WHERE user_id = ?', [newStatus, id]);
     return this.findById(id);
   },
 
   async deactivateUser(id) {
-    await query('UPDATE users SET is_active = 0, updated_at = NOW() WHERE id = ?', [id]);
+    await query("UPDATE users SET is_active = 0, status = 'deactivated', updated_at = NOW() WHERE id = ?", [id]);
+    await query("UPDATE customers SET status = 'deactivated', updated_at = NOW() WHERE user_id = ?", [id]);
     return this.findById(id);
   },
 
   async activateUser(id) {
-    await query('UPDATE users SET is_active = 1, updated_at = NOW() WHERE id = ?', [id]);
+    await query("UPDATE users SET is_active = 1, status = 'active', updated_at = NOW() WHERE id = ?", [id]);
+    await query("UPDATE customers SET status = 'active', updated_at = NOW() WHERE user_id = ?", [id]);
     return this.findById(id);
   },
 
@@ -385,27 +400,10 @@ const UserModel = {
         p.address,
         p.username,
         p.created_at,
-        'pending' AS status
+        p.status
       FROM pending_registrations p
       WHERE p.status = 'pending'
-      UNION
-      SELECT 
-        u.id,
-        u.first_name,
-        u.middle_name,
-        u.middle_initial,
-        u.last_name,
-        u.email,
-        c.phone,
-        c.address,
-        u.username,
-        u.created_at,
-        u.status
-      FROM users u
-      LEFT JOIN customers c ON c.user_id = u.id
-      WHERE u.role = 'customer' AND u.status = 'pending'
-        AND (u.email IS NULL OR u.email NOT IN (SELECT email FROM pending_registrations WHERE status = 'pending'))
-      ORDER BY created_at DESC
+      ORDER BY p.created_at DESC
     `);
   },
 
