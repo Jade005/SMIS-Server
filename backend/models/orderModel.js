@@ -123,9 +123,9 @@ const OrderModel = {
 
       for (const item of orderItemsToInsert) {
         await connection.query(
-          `INSERT INTO order_items (order_id, product_id, product_name, meat_cut, weight_kg, price_per_kg, subtotal)
-           VALUES (?, ?, ?, ?, ?, ?, ?)`,
-          [orderId, item.product_id, item.product_name, item.meat_cut, item.weight_kg, item.price_per_kg, item.subtotal]
+          `INSERT INTO order_items (order_id, product_id, product_name, meat_cut, weight_kg, price_per_kg, unit_price, price_at_order, subtotal, line_total)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [orderId, item.product_id, item.product_name, item.meat_cut, item.weight_kg, item.price_per_kg, item.price_per_kg, item.price_per_kg, item.subtotal, item.subtotal]
         );
       }
 

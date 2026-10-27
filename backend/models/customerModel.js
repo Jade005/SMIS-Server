@@ -189,7 +189,7 @@ const CustomerModel = {
   },
 
   async updatePasswordHash(user_id, password_hash) {
-    await query('UPDATE users SET password_hash = ?, is_temp_password = 0 WHERE id = ?', [password_hash, user_id]);
+    await query('UPDATE users SET password_hash = ?, is_temp_password = 0, temp_password_plain = NULL WHERE id = ?', [password_hash, user_id]);
     return true;
   }
 };

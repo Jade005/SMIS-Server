@@ -47,7 +47,9 @@ router.patch('/:id/status', authorize('admin'), toggleUserStatus);
 router.patch('/:id/deactivate', authorize('admin'), deactivateUser);
 router.patch('/:id/activate', authorize('admin'), activateUser);
 router.delete('/:id', authorize('admin'), deleteUser);
-router.patch('/:id/password', authorize('admin'), resetPassword);
+// Password reset endpoints are permanently disabled (Admins cannot reset user passwords)
+router.all('/:id/password', (req, res) => res.status(403).json({ message: 'Password reset is disabled. Administrators cannot reset user passwords.' }));
+router.all('/:id/reset-password', (req, res) => res.status(403).json({ message: 'Password reset is disabled. Administrators cannot reset user passwords.' }));
 
 // Self or Admin accessible routes
 router.get('/:id', authorizeSelfOrAdmin, getUserById);

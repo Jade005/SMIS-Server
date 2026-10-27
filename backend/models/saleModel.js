@@ -99,8 +99,10 @@ const SaleModel = {
           throw new Error(`Insufficient stock for ${batch.product_name} (${batch.meat_cut}). Available: ${batch.available_stock_kg} kg, Requested: ${weight_kg} kg`);
         }
 
-        // Use product current price per kg unless batch price is explicitly different and set
-        const unitPrice = (batch.product_price_per_kg !== undefined && batch.product_price_per_kg !== null && Number(batch.product_price_per_kg) > 0)
+        // Use explicitly charged unit price (from pre-order snapshot or locked cart price), or fallback to current product catalog price
+        const unitPrice = (item.price_per_kg !== undefined && item.price_per_kg !== null && Number(item.price_per_kg) > 0)
+          ? Number(item.price_per_kg)
+          : (batch.product_price_per_kg !== undefined && batch.product_price_per_kg !== null && Number(batch.product_price_per_kg) > 0)
           ? Number(batch.product_price_per_kg)
           : Number(batch.price_per_kg || 0);
         const itemSubtotal = Number(weight_kg) * unitPrice;

@@ -45,9 +45,10 @@ const UserModel = {
   },
 
   async getAllUsers(filters = {}) {
+    const includeTemp = Boolean(filters.isAdmin);
     let sql = `
       SELECT id, first_name, middle_name, middle_initial, last_name, username, email,
-             role, status, is_active, is_temp_password, profile_picture,
+             role, status, is_active, is_temp_password, ${includeTemp ? 'temp_password_plain,' : ''} profile_picture,
              registered_by, created_by_admin_id, created_at, updated_at
       FROM users
       WHERE deleted_at IS NULL
@@ -163,14 +164,6 @@ const UserModel = {
     if (role !== undefined) { updates.push('role = ?'); params.push(role); }
     if (is_active !== undefined) { updates.push('is_active = ?'); params.push(is_active ? 1 : 0); }
     if (profile_picture !== undefined) { updates.push('profile_picture = ?'); params.push(finalPicture); }
-
-    if (password && password.trim()) {
-      const salt = await bcrypt.genSalt(12);
-      const password_hash = await bcrypt.hash(password.trim(), salt);
-      updates.push('password_hash = ?'); params.push(password_hash);
-      updates.push('is_temp_password = 0');
-      updates.push('temp_password_plain = NULL');
-    }
 
     if (updates.length > 0) {
       params.push(id);

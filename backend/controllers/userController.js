@@ -7,7 +7,8 @@ const { getMiddleInitial, sanitizeMiddleName, getDisplayName, generateUniqueSyst
 const getUsers = async (req, res, next) => {
     try {
         const { role, is_active } = req.query;
-        const users = await UserModel.getAllUsers({ role, is_active });
+        const isAdmin = req.user && req.user.role === 'admin';
+        const users = await UserModel.getAllUsers({ role, is_active, isAdmin });
         res.json(users);
     } catch (error) {
         next(error);
@@ -147,7 +148,7 @@ const createUser = async (req, res, next) => {
 const updateUser = async (req, res, next) => {
     try {
         const { id } = req.params;
-        const { first_name, middle_name, middle_initial, last_name, full_name, username, email, role, status, is_active, password, profile_picture } = req.body;
+        const { first_name, middle_name, middle_initial, last_name, full_name, username, email, role, status, is_active, profile_picture } = req.body;
 
         const targetUser = await UserModel.findById(id);
         if (!targetUser) {
@@ -239,7 +240,6 @@ const updateUser = async (req, res, next) => {
             email: email !== undefined ? email.trim() : undefined,
             role: normalizedRole,
             is_active: activeVal,
-            password: password && password.trim() ? password.trim() : undefined,
             profile_picture: savedAvatar
         });
 
@@ -351,36 +351,10 @@ const deleteUser = async (req, res, next) => {
     }
 };
 
-const resetPassword = async (req, res, next) => {
-    try {
-        const user = await UserModel.findById(req.params.id);
-        if (!user) {
-            return res.status(404).json({ message: 'User not found' });
-        }
-
-        const tempPassword = req.body?.password || generateTemporaryPassword(10);
-        await UserModel.resetPasswordWithTemp(user.id, tempPassword);
-
-        const fullName = getDisplayName(user);
-        const username = user.username || user.email;
-
-        const emailResult = await sendAccountCredentialsEmail({
-            email: user.email,
-            fullName,
-            username,
-            tempPassword,
-            isReset: true
-        });
-
-        res.json({
-            message: `Password reset successfully for ${fullName}.`,
-            temp_password: tempPassword,
-            email_sent: emailResult.success,
-            email_fallback: Boolean(emailResult.fallback)
-        });
-    } catch (error) {
-        next(error);
-    }
+const resetPassword = async (req, res) => {
+    return res.status(403).json({
+        message: 'Password reset is disabled. Administrators cannot reset user passwords.'
+    });
 };
 
 const getPendingRegistrations = async (req, res, next) => {
@@ -453,20 +427,20 @@ const approveRegistration = async (req, res, next) => {
 
         if (existingUsers.length > 0) {
             userId = existingUsers[0].id;
-            // Update to active, set password hash, temp password flag = 1, temp_password_plain = NULL
+            // Update to active, set password hash, temp password flag = 1, store temporary password display copy
             await conn.execute(
                 `UPDATE users
                  SET status = 'active',
                      is_active = 1,
                      password_hash = ?,
                      is_temp_password = 1,
-                     temp_password_plain = NULL,
+                     temp_password_plain = ?,
                      username = ?,
                      middle_name = COALESCE(?, middle_name),
                      middle_initial = COALESCE(?, middle_initial),
                      updated_at = NOW()
                  WHERE id = ?`,
-                [passwordHash, finalUsername, reg.middle_name || null, regMi, userId]
+                [passwordHash, tempPassword, finalUsername, reg.middle_name || null, regMi, userId]
             );
 
             // Update customers table
@@ -481,10 +455,10 @@ const approveRegistration = async (req, res, next) => {
                 [finalUsername, reg.phone || null, reg.address || null, userId]
             );
         } else {
-            // Create brand new active user row inside transaction
+            // Create brand new active user row inside transaction with temp_password_plain display copy
             const [insertUser] = await conn.execute(
                 `INSERT INTO users (first_name, middle_name, middle_initial, last_name, username, email, password_hash, role, status, is_active, is_temp_password, temp_password_plain, created_at, updated_at)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, 'customer', 'active', 1, 1, NULL, NOW(), NOW())`,
+                 VALUES (?, ?, ?, ?, ?, ?, ?, 'customer', 'active', 1, 1, ?, NOW(), NOW())`,
                 [
                     reg.first_name,
                     reg.middle_name || null,
@@ -492,7 +466,8 @@ const approveRegistration = async (req, res, next) => {
                     reg.last_name,
                     finalUsername,
                     reg.email,
-                    passwordHash
+                    passwordHash,
+                    tempPassword
                 ]
             );
             userId = insertUser.insertId;
