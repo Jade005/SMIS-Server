@@ -22,25 +22,6 @@ const analyticsRoutes = require('./routes/analyticsRoutes');
 const app = express();
 const PORT = parseInt(process.env.PORT || '5000', 10);
 
-// Detect and cache the server's public outbound IPv4 (for Hostinger Remote MySQL allowlisting)
-let cachedOutboundIp = null;
-async function getOutboundIp() {
-  if (cachedOutboundIp) return cachedOutboundIp;
-  try {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 3500);
-    const res = await fetch('https://api.ipify.org?format=json', { signal: controller.signal });
-    clearTimeout(timer);
-    if (res.ok) {
-      const data = await res.json();
-      cachedOutboundIp = data.ip || null;
-    }
-  } catch (_) {
-    // Ignore if external IP lookup is unavailable
-  }
-  return cachedOutboundIp || 'See Render -> Connect -> Outbound';
-}
-
 // Trust Render's reverse proxy so req.ip and rate limiting use the real client IP
 app.set('trust proxy', 1);
 
@@ -67,7 +48,6 @@ app.get('/', async (req, res) => {
   let dbTables = [];
   let dbError = '';
   const dbName = dbConfig.database;
-  const outboundIp = await getOutboundIp();
 
   try {
     const conn = await pool.getConnection();
@@ -239,7 +219,6 @@ app.get('/', async (req, res) => {
     border-radius: 8px;
     font-family: monospace;
     margin-top: 12px;
-    line-height: 1.5;
   }
   .footer {
     font-size: 12px;
@@ -323,17 +302,13 @@ app.get('/', async (req, res) => {
         <div class="db-meta-label">User</div>
         <div class="db-meta-value">${dbConfig.user}</div>
       </div>
-      <div class="db-meta-item">
-        <div class="db-meta-label">Server Outbound IP</div>
-        <div class="db-meta-value" style="color:#38bdf8;">${outboundIp}</div>
-      </div>
     </div>
     ${dbTables.length > 0 ? `
     <div class="table-section-label">Verified Tables (${dbTables.length} found in "${dbName}")</div>
     <div class="table-chips">
       ${dbTables.map((t) => `<span class="chip">${t}</span>`).join('')}
     </div>` : ''}
-    ${dbError ? `<div class="error-box">⚠ Connection Error: ${dbError}<br/>Whitelist Render Outbound IP <strong>${outboundIp}</strong> (and all Static Outbound IPs under Render &rarr; Connect &rarr; Outbound) in Hostinger hPanel &rarr; Databases &rarr; Remote MySQL.</div>` : ''}
+    ${dbError ? `<div class="error-box">⚠ Connection Error: ${dbError}</div>` : ''}
   </div>
 
   <div class="api-card">
@@ -357,7 +332,7 @@ app.get('/api/health', (req, res) => {
   });
 });
 
-// Database health: actually runs SELECT 1 (no credentials exposed)
+// Database health: actually runs SELECT 1 (no credentials or error details exposed)
 app.get('/api/health/db', async (req, res) => {
   try {
     const conn = await pool.getConnection();
@@ -365,14 +340,8 @@ app.get('/api/health/db', async (req, res) => {
     conn.release();
     res.status(200).json({ status: 'OK', database: 'connected' });
   } catch (err) {
-    const outboundIp = await getOutboundIp();
-    console.error(`[DB Health] failed code=${err.code || err.errno || 'UNKNOWN'} outboundIp=${outboundIp} message="${err.message}"`);
-    res.status(503).json({
-      status: 'ERROR',
-      database: 'unreachable',
-      code: err.code || 'UNKNOWN',
-      outboundIp
-    });
+    console.error(`[DB Health] failed code=${err.code || err.errno || 'UNKNOWN'} message="${err.message}"`);
+    res.status(503).json({ status: 'ERROR', database: 'unreachable' });
   }
 });
 
@@ -394,11 +363,9 @@ app.use(errorHandler);
 
 // Start Server (bind to 0.0.0.0 for Render container compatibility)
 app.listen(PORT, '0.0.0.0', async () => {
-  const outboundIp = await getOutboundIp();
   console.log(`=================================================`);
   console.log(`🚀 SMIS Server running on http://0.0.0.0:${PORT}`);
   console.log(`📊 Environment: ${process.env.NODE_ENV || 'development'}`);
-  console.log(`🌐 Outbound IP: ${outboundIp}`);
   console.log(`=================================================`);
   await verifyDatabaseConnection();
 });
