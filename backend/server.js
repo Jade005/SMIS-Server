@@ -1,9 +1,10 @@
 const express = require('express');
 const cors = require('cors');
-require('dotenv').config();
+const path = require('path');
+require('dotenv').config({ path: path.resolve(__dirname, '.env') });
 
 const errorHandler = require('./middleware/errorHandler');
-const { pool } = require('./config/db');
+const { pool, verifyDatabaseConnection } = require('./config/db');
 
 // Import Route Modules
 const authRoutes = require('./routes/authRoutes');
@@ -17,8 +18,6 @@ const saleRoutes = require('./routes/saleRoutes');
 const orderRoutes = require('./routes/orderRoutes');
 const reportRoutes = require('./routes/reportRoutes');
 const analyticsRoutes = require('./routes/analyticsRoutes');
-
-const path = require('path');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -340,11 +339,12 @@ app.use('/api/analytics', analyticsRoutes);
 app.use(errorHandler);
 
 // Start Server
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
   console.log(`=================================================`);
   console.log(`🚀 SMIS Server running on http://localhost:${PORT}`);
   console.log(`📊 Environment: ${process.env.NODE_ENV || 'development'}`);
   console.log(`=================================================`);
+  await verifyDatabaseConnection();
 });
 
 module.exports = app;

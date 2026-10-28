@@ -185,7 +185,16 @@ const login = async (req, res, next) => {
       }
     });
   } catch (error) {
-    next(error);
+    console.error('[Auth Login Error]', {
+      code: error.code || error.errno || 'UNKNOWN',
+      syscall: error.syscall || undefined,
+      address: error.address || undefined,
+      port: error.port || undefined,
+      message: error.message
+    });
+    return res.status(503).json({
+      message: 'Server is temporarily unavailable, please try again'
+    });
   }
 };
 
