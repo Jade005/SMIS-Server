@@ -5,7 +5,7 @@
   "description": "Root wrapper for SMIS Backend Server (Render deployment)",
   "main": "backend/server.js",
   "engines": {
-    "node": ">=18.0.0"
+    "node": "20.x"
   },
   "scripts": {
     "postinstall": "npm --prefix backend install",
@@ -15,4 +15,3 @@
     "test-db": "npm --prefix backend run test-db"
   }
 }
-

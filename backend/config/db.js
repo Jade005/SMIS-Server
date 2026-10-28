@@ -8,7 +8,7 @@ const dbConfig = {
   password: process.env.DB_PASSWORD || 'smis',
   database: (process.env.DB_NAME || 'smis').trim(),
   port: parseInt((process.env.DB_PORT || '3306').trim(), 10) || 3306,
-  connectTimeout: 20000,
+  connectTimeout: 10000,
   waitForConnections: true,
   connectionLimit: 5,
   maxIdle: 5,

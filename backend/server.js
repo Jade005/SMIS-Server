@@ -22,6 +22,27 @@ const analyticsRoutes = require('./routes/analyticsRoutes');
 const app = express();
 const PORT = parseInt(process.env.PORT || '5000', 10);
 
+// Detect the server's public IPv4 on startup (works on Render Free Tier without needing dashboard Outbound tab)
+let serverPublicIp = 'Detecting...';
+async function fetchServerPublicIp() {
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 3000);
+    const res = await fetch('https://api4.ipify.org?format=json', { signal: controller.signal });
+    clearTimeout(timer);
+    if (res.ok) {
+      const data = await res.json();
+      if (data && data.ip) {
+        serverPublicIp = data.ip;
+        return data.ip;
+      }
+    }
+  } catch (_) {
+    // Ignore if unavailable
+  }
+  return serverPublicIp;
+}
+
 // Trust Render's reverse proxy so req.ip and rate limiting use the real client IP
 app.set('trust proxy', 1);
 
@@ -40,7 +61,12 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 // Serve static uploads
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
-// Root Status Dashboard
+// Instant HEAD / handler so Render's port scanner detects the open HTTP port in <5ms
+app.head('/', (req, res) => {
+  res.status(200).end();
+});
+
+// Root Status Dashboard (with a fast 2.5s timeout on DB check so Render port scans never time out)
 app.get('/', async (req, res) => {
   let dbStatus = 'Checking...';
   let dbColor = '#f59e0b';
@@ -50,9 +76,24 @@ app.get('/', async (req, res) => {
   const dbName = dbConfig.database;
 
   try {
-    const conn = await pool.getConnection();
-    const [tables] = await conn.query('SHOW TABLES');
-    conn.release();
+    const tables = await Promise.race([
+      (async () => {
+        const conn = await pool.getConnection();
+        try {
+          const [rows] = await conn.query('SHOW TABLES');
+          return rows;
+        } finally {
+          conn.release();
+        }
+      })(),
+      new Promise((_, reject) =>
+        setTimeout(() => {
+          const timeoutErr = new Error('connect ETIMEDOUT (3s status probe timeout)');
+          timeoutErr.code = 'ETIMEDOUT';
+          reject(timeoutErr);
+        }, 3000)
+      )
+    ]);
     dbStatus = 'Connected';
     dbColor = '#10b981';
     dbIcon = '✅';
@@ -302,6 +343,10 @@ app.get('/', async (req, res) => {
         <div class="db-meta-label">User</div>
         <div class="db-meta-value">${dbConfig.user}</div>
       </div>
+      <div class="db-meta-item">
+        <div class="db-meta-label">Server IPv4</div>
+        <div class="db-meta-value" style="color:#38bdf8;">${serverPublicIp}</div>
+      </div>
     </div>
     ${dbTables.length > 0 ? `
     <div class="table-section-label">Verified Tables (${dbTables.length} found in "${dbName}")</div>
@@ -362,12 +407,16 @@ app.use('/api/analytics', analyticsRoutes);
 app.use(errorHandler);
 
 // Start Server (bind to 0.0.0.0 for Render container compatibility)
-app.listen(PORT, '0.0.0.0', async () => {
+app.listen(PORT, '0.0.0.0', () => {
   console.log(`=================================================`);
   console.log(`🚀 SMIS Server running on http://0.0.0.0:${PORT}`);
   console.log(`📊 Environment: ${process.env.NODE_ENV || 'development'}`);
   console.log(`=================================================`);
-  await verifyDatabaseConnection();
+  // Run IP detection and DB startup check in background so HTTP port scan succeeds immediately
+  fetchServerPublicIp().then((ip) => {
+    console.log(`[Server Public IPv4] ${ip}`);
+  });
+  verifyDatabaseConnection().catch(() => {});
 });
 
 module.exports = app;
