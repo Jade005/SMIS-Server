@@ -2,6 +2,7 @@ const UserModel = require('../models/userModel');
 const generateToken = require('../utils/generateToken');
 const { generateTemporaryPassword } = require('../utils/passwordHelper');
 const { query } = require('../config/db');
+const { isDatabaseConnectionError } = require('../utils/dbErrors');
 const { getMiddleInitial, sanitizeMiddleName, getDisplayName, generateUniqueSystemEmail } = require('../utils/nameHelper');
 
 // In-memory rate limiting map for failed login attempts
@@ -192,9 +193,14 @@ const login = async (req, res, next) => {
       port: error.port || undefined,
       message: error.message
     });
-    return res.status(503).json({
-      message: 'Server is temporarily unavailable, please try again'
-    });
+    // Only database connectivity failures are reported as "unavailable".
+    // Any other error goes through the central error handler unchanged.
+    if (isDatabaseConnectionError(error)) {
+      return res.status(503).json({
+        message: 'Server is temporarily unavailable, please try again'
+      });
+    }
+    return next(error);
   }
 };
 

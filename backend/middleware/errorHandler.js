@@ -1,22 +1,4 @@
-const DB_UNAVAILABLE_CODES = new Set([
-  'ETIMEDOUT',
-  'ECONNREFUSED',
-  'ENOTFOUND',
-  'EHOSTUNREACH',
-  'ECONNRESET',
-  'PROTOCOL_CONNECTION_LOST',
-  'ER_CON_COUNT_ERROR',
-  'EACCES'
-]);
-
-const isDatabaseConnectionError = (err) => {
-  if (!err) return false;
-  if (err.code && DB_UNAVAILABLE_CODES.has(err.code)) return true;
-  if (typeof err.message === 'string' && /ETIMEDOUT|ECONNREFUSED|ENOTFOUND|PROTOCOL_CONNECTION_LOST/i.test(err.message)) {
-    return true;
-  }
-  return false;
-};
+const { isDatabaseConnectionError } = require('../utils/dbErrors');
 
 const errorHandler = (err, req, res, next) => {
   console.error('SERVER ERROR:', {

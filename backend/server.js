@@ -322,6 +322,19 @@ app.get('/api/health', (req, res) => {
   });
 });
 
+// Database health: actually runs SELECT 1 (no credentials or error details exposed)
+app.get('/api/health/db', async (req, res) => {
+  try {
+    const conn = await pool.getConnection();
+    await conn.query('SELECT 1');
+    conn.release();
+    res.status(200).json({ status: 'OK', database: 'connected' });
+  } catch (err) {
+    console.error(`[DB Health] failed code=${err.code || err.errno || 'UNKNOWN'} message="${err.message}"`);
+    res.status(503).json({ status: 'ERROR', database: 'unreachable' });
+  }
+});
+
 // Mount API Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
