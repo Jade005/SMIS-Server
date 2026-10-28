@@ -3,6 +3,9 @@
   "version": "1.0.0",
   "description": "Slaughterhouse Meat Inventory and Sales Management System - REST API Backend",
   "main": "server.js",
+  "engines": {
+    "node": ">=18.0.0"
+  },
   "scripts": {
     "start": "node server.js",
     "dev": "nodemon server.js",

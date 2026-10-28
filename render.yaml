@@ -1,0 +1,28 @@
+services:
+  - type: web
+    name: smis-server
+    runtime: node
+    rootDir: backend
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DB_HOST
+        value: 195.35.61.31
+      - key: DB_PORT
+        value: "3306"
+      - key: DB_NAME
+        value: u463580331_smis
+      - key: DB_USER
+        value: u463580331_smis
+      - key: DB_PASSWORD
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: JWT_EXPIRES_IN
+        value: 1d
+      - key: FRONTEND_URL
+        value: https://smis.bscs4b.com
+

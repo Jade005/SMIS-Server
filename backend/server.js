@@ -4,7 +4,7 @@ const path = require('path');
 require('dotenv').config({ path: path.resolve(__dirname, '.env') });
 
 const errorHandler = require('./middleware/errorHandler');
-const { pool, verifyDatabaseConnection } = require('./config/db');
+const { dbConfig, pool, verifyDatabaseConnection } = require('./config/db');
 
 // Import Route Modules
 const authRoutes = require('./routes/authRoutes');
@@ -20,10 +20,20 @@ const reportRoutes = require('./routes/reportRoutes');
 const analyticsRoutes = require('./routes/analyticsRoutes');
 
 const app = express();
-const PORT = process.env.PORT || 5000;
+const PORT = parseInt(process.env.PORT || '5000', 10);
+
+// Trust Render's reverse proxy so req.ip and rate limiting use the real client IP
+app.set('trust proxy', 1);
 
 // Core Middleware
-app.use(cors());
+app.use(
+  cors({
+    origin: true,
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization']
+  })
+);
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
@@ -37,7 +47,7 @@ app.get('/', async (req, res) => {
   let dbIcon = '⏳';
   let dbTables = [];
   let dbError = '';
-  let dbName = process.env.DB_NAME || 'smis';
+  const dbName = dbConfig.database;
 
   try {
     const conn = await pool.getConnection();
@@ -51,7 +61,7 @@ app.get('/', async (req, res) => {
     dbStatus = 'Failed';
     dbColor = '#ef4444';
     dbIcon = '❌';
-    dbError = err.message;
+    dbError = err.code ? `${err.code}: ${err.message}` : err.message;
   }
 
   const uptime = process.uptime();
@@ -258,7 +268,7 @@ app.get('/', async (req, res) => {
     <div class="card">
       <div class="card-icon">🌐</div>
       <div class="card-label">Server Port</div>
-      <div class="card-value">${process.env.PORT || 5000}</div>
+      <div class="card-value">${PORT}</div>
     </div>
     <div class="card">
       <div class="card-icon">⏱️</div>
@@ -278,11 +288,11 @@ app.get('/', async (req, res) => {
     <div class="db-meta-grid">
       <div class="db-meta-item">
         <div class="db-meta-label">Host</div>
-        <div class="db-meta-value">${process.env.DB_HOST || 'localhost'}</div>
+        <div class="db-meta-value">${dbConfig.host}</div>
       </div>
       <div class="db-meta-item">
         <div class="db-meta-label">Port</div>
-        <div class="db-meta-value">${process.env.DB_PORT || 3306}</div>
+        <div class="db-meta-value">${dbConfig.port}</div>
       </div>
       <div class="db-meta-item">
         <div class="db-meta-label">Database</div>
@@ -290,7 +300,7 @@ app.get('/', async (req, res) => {
       </div>
       <div class="db-meta-item">
         <div class="db-meta-label">User</div>
-        <div class="db-meta-value">${process.env.DB_USER || 'smis'}</div>
+        <div class="db-meta-value">${dbConfig.user}</div>
       </div>
     </div>
     ${dbTables.length > 0 ? `
@@ -304,7 +314,7 @@ app.get('/', async (req, res) => {
   <div class="api-card">
     <div class="api-title">📡 Available API Endpoints</div>
     <div class="api-list">
-      ${['/api/health','/api/auth','/api/users','/api/categories','/api/products','/api/suppliers','/api/inventory','/api/sales','/api/orders','/api/reports','/api/analytics'].map((e) => `<span class="api-chip">${e}</span>`).join('')}
+      ${['/api/health','/api/health/db','/api/auth','/api/users','/api/categories','/api/products','/api/suppliers','/api/inventory','/api/sales','/api/orders','/api/reports','/api/analytics'].map((e) => `<span class="api-chip">${e}</span>`).join('')}
     </div>
   </div>
 
@@ -351,10 +361,10 @@ app.use('/api/analytics', analyticsRoutes);
 // Centralized Error Handler
 app.use(errorHandler);
 
-// Start Server
-app.listen(PORT, async () => {
+// Start Server (bind to 0.0.0.0 for Render container compatibility)
+app.listen(PORT, '0.0.0.0', async () => {
   console.log(`=================================================`);
-  console.log(`🚀 SMIS Server running on http://localhost:${PORT}`);
+  console.log(`🚀 SMIS Server running on http://0.0.0.0:${PORT}`);
   console.log(`📊 Environment: ${process.env.NODE_ENV || 'development'}`);
   console.log(`=================================================`);
   await verifyDatabaseConnection();
