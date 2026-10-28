@@ -7,28 +7,34 @@ const normalizeReportQuery = (query) => {
   let finalTo = to || end_date;
 
   if (year) {
-    const y = Number(year);
     const now = new Date();
     const curY = now.getFullYear();
     const curM = now.getMonth() + 1;
     const curD = now.getDate();
 
-    if (!month || month === 'all' || month === 'All') {
+    if (year === 'all' || year === 'All') {
       finalGranularity = 'yearly';
-      finalFrom = `${y}-01-01`;
-      finalTo = (y === curY)
-        ? `${y}-${String(curM).padStart(2, '0')}-${String(curD).padStart(2, '0')}`
-        : `${y}-12-31`;
+      finalFrom = '2023-01-01';
+      finalTo = `${curY}-${String(curM).padStart(2, '0')}-${String(curD).padStart(2, '0')}`;
     } else {
-      finalGranularity = 'daily';
-      const m = Number(month);
-      finalFrom = `${y}-${String(m).padStart(2, '0')}-01`;
-      const lastDay = new Date(y, m, 0).getDate();
-      let endDay = lastDay;
-      if (y === curY && m === curM) {
-        endDay = Math.min(lastDay, curD);
+      const y = Number(year);
+      if (!month || month === 'all' || month === 'All') {
+        finalGranularity = 'monthly';
+        finalFrom = `${y}-01-01`;
+        finalTo = (y === curY)
+          ? `${y}-${String(curM).padStart(2, '0')}-${String(curD).padStart(2, '0')}`
+          : `${y}-12-31`;
+      } else {
+        finalGranularity = 'daily';
+        const m = Number(month);
+        finalFrom = `${y}-${String(m).padStart(2, '0')}-01`;
+        const lastDay = new Date(y, m, 0).getDate();
+        let endDay = lastDay;
+        if (y === curY && m === curM) {
+          endDay = Math.min(lastDay, curD);
+        }
+        finalTo = `${y}-${String(m).padStart(2, '0')}-${String(endDay).padStart(2, '0')}`;
       }
-      finalTo = `${y}-${String(m).padStart(2, '0')}-${String(endDay).padStart(2, '0')}`;
     }
   }
 
@@ -38,6 +44,8 @@ const normalizeReportQuery = (query) => {
     to: finalTo,
     start_date: finalFrom,
     end_date: finalTo,
+    year,
+    month,
     period,
     date
   };

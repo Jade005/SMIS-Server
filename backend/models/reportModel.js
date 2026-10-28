@@ -2,7 +2,8 @@ const { query } = require('../config/db');
 const { resolveDateRange, generateContinuousBuckets } = require('../utils/reportDateHelper');
 
 function getDateFormatString(granularity) {
-  if (granularity === 'yearly') return "'%Y-%m'";
+  if (granularity === 'yearly') return "'%Y'";
+  if (granularity === 'monthly') return "'%Y-%m'";
   return "'%Y-%m-%d'";
 }
 
@@ -16,11 +17,31 @@ const ReportModel = {
    */
   async getSalesReport({ granularity = 'daily', from, to }) {
     const range = resolveDateRange({ granularity, from, to });
+
+    if (range.granularity === 'yearly') {
+      const minYearRows = await query('SELECT MIN(YEAR(created_at)) AS min_year FROM sales');
+      const dbMinYear = Number(minYearRows[0]?.min_year) || 2023;
+      const startYear = Math.min(2023, dbMinYear);
+      const currentYear = new Date().getFullYear();
+      range.from = `${startYear}-01-01`;
+      if (!range.to || Number(range.to.slice(0, 4)) < currentYear) {
+        range.to = `${currentYear}-12-31`;
+      }
+    }
+
     const fmt = getDateFormatString(range.granularity);
+    const salesBucketExpr =
+      range.granularity === 'yearly'
+        ? 'CAST(YEAR(s.created_at) AS CHAR)'
+        : `DATE_FORMAT(s.created_at, ${fmt})`;
+    const itemsBucketExpr =
+      range.granularity === 'yearly'
+        ? 'CAST(YEAR(si.created_at) AS CHAR)'
+        : `DATE_FORMAT(si.created_at, ${fmt})`;
 
     // 1. Chart time-series: calculate revenue & count from sales, volume from sales_items
     const salesChartSql = `
-      SELECT DATE_FORMAT(s.created_at, ${fmt}) AS bucket_key,
+      SELECT ${salesBucketExpr} AS bucket_key,
              COALESCE(SUM(s.total_amount), 0) AS revenue,
              COUNT(s.id) AS transactions_count
       FROM sales s
@@ -30,7 +51,7 @@ const ReportModel = {
     const salesChartRows = await query(salesChartSql, [range.from, range.to]);
 
     const volumeChartSql = `
-      SELECT DATE_FORMAT(si.created_at, ${fmt}) AS bucket_key,
+      SELECT ${itemsBucketExpr} AS bucket_key,
              COALESCE(SUM(si.weight_kg), 0) AS volume_kg
       FROM sales_items si
       WHERE DATE(si.created_at) BETWEEN ? AND ?
@@ -40,31 +61,64 @@ const ReportModel = {
 
     const chartMap = {};
     for (const row of salesChartRows) {
-      chartMap[row.bucket_key] = {
+      const k = String(row.bucket_key);
+      chartMap[k] = {
         revenue: Number(row.revenue) || 0,
         volume_kg: 0,
         transactions_count: Number(row.transactions_count) || 0
       };
     }
     for (const row of volumeChartRows) {
-      if (!chartMap[row.bucket_key]) {
-        chartMap[row.bucket_key] = { revenue: 0, volume_kg: 0, transactions_count: 0 };
+      const k = String(row.bucket_key);
+      if (!chartMap[k]) {
+        chartMap[k] = { revenue: 0, volume_kg: 0, transactions_count: 0 };
       }
-      chartMap[row.bucket_key].volume_kg = Number(row.volume_kg) || 0;
+      chartMap[k].volume_kg = Number(row.volume_kg) || 0;
     }
 
     // Continuous bucket filling with 0
     const buckets = generateContinuousBuckets(range.from, range.to, range.granularity);
     const chartData = buckets.map((b) => {
-      const match = chartMap[b.key] || { revenue: 0, volume_kg: 0, transactions_count: 0 };
+      const match = chartMap[String(b.key)] || { revenue: 0, volume_kg: 0, transactions_count: 0 };
       return {
-        key: b.key,
-        label: b.label,
+        key: String(b.key),
+        label: String(b.label),
         revenue: match.revenue,
         volume_kg: match.volume_kg,
         transactions_count: match.transactions_count
       };
     });
+
+    // Per-year comparison rows for Yearly overview
+    let yearComparison = [];
+    if (range.granularity === 'yearly') {
+      yearComparison = chartData.map((b, idx) => {
+        const rev = Number(b.revenue) || 0;
+        const tx = Number(b.transactions_count) || 0;
+        const vol = Number(b.volume_kg) || 0;
+        const avg = tx > 0 ? rev / tx : 0;
+        let growth_percent = null;
+        if (idx > 0) {
+          const prevRev = Number(chartData[idx - 1].revenue) || 0;
+          if (prevRev > 0) {
+            growth_percent = ((rev - prevRev) / prevRev) * 100;
+          } else if (rev > 0) {
+            growth_percent = 100;
+          } else {
+            growth_percent = null;
+          }
+        }
+        return {
+          year: Number(b.key),
+          label: String(b.label),
+          total_revenue: rev,
+          total_transactions: tx,
+          average_transaction_value: avg,
+          total_volume_kg: vol,
+          growth_percent
+        };
+      });
+    }
 
     // 2. Summary KPIs: query sales directly for transactions and revenue, and sales_items for volume
     const summarySalesSql = `
@@ -122,6 +176,7 @@ const ReportModel = {
       to: range.to,
       summary,
       chartData,
+      yearComparison,
       topSellingCuts,
       transactions
     };

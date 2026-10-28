@@ -31,11 +31,11 @@ function resolveDateRange({ granularity = 'daily', from, to, start_date, end_dat
     d.setDate(d.getDate() - 13); // 14 days including today
     defaultFrom = formatDate(d);
   } else if (cleanGranularity === 'monthly') {
-    const d = new Date(today.getFullYear(), today.getMonth(), 1); // 1st day of current month
+    const d = new Date(today.getFullYear(), 0, 1); // Jan 1 of current year
     defaultFrom = formatDate(d);
     defaultTo = formatDate(today);
   } else if (cleanGranularity === 'yearly') {
-    const d = new Date(today.getFullYear(), 0, 1); // Jan 1 of current year
+    const d = new Date(2023, 0, 1); // Jan 1 of earliest report year
     defaultFrom = formatDate(d);
     defaultTo = formatDate(today);
   }
@@ -55,15 +55,16 @@ function resolveDateRange({ granularity = 'daily', from, to, start_date, end_dat
 
 /**
  * Generates continuous empty buckets between `from` and `to`.
- * - daily & monthly: 1 bar per day (key: YYYY-MM-DD, label: M/D)
- * - yearly: 12 bars (Jan to Dec, key: YYYY-MM, label: Month Name)
+ * - daily: 1 bar per day (key: YYYY-MM-DD, label: M/D)
+ * - monthly: 1 bar per month (Jan to Dec, key: YYYY-MM, label: Month Name)
+ * - yearly: 1 bar per year (key: YYYY, label: YYYY)
  */
 function generateContinuousBuckets(from, to, granularity) {
   const buckets = [];
   const [startY, startM, startD] = from.split('-').map(Number);
   const [endY, endM, endD] = to.split('-').map(Number);
 
-  if (granularity === 'daily' || granularity === 'monthly') {
+  if (granularity === 'daily') {
     const curr = new Date(startY, startM - 1, startD);
     const end = new Date(endY, endM - 1, endD);
 
@@ -76,7 +77,7 @@ function generateContinuousBuckets(from, to, granularity) {
       curr.setDate(curr.getDate() + 1);
       count++;
     }
-  } else if (granularity === 'yearly') {
+  } else if (granularity === 'monthly') {
     if (startY === endY) {
       // Single year selected: 1 bar per month Jan to Dec
       for (let m = 1; m <= 12; m++) {
@@ -100,6 +101,16 @@ function generateContinuousBuckets(from, to, granularity) {
         }
         count++;
       }
+    }
+  } else if (granularity === 'yearly') {
+    let y = startY;
+    let count = 0;
+    while (y <= endY && count < 50) {
+      const key = String(y);
+      const label = String(y);
+      buckets.push({ key, label });
+      y++;
+      count++;
     }
   }
 
